@@ -1,0 +1,21 @@
+[
+  {
+    "source": "manual",
+    "company": "Acme Data",
+    "title": "Data Engineer",
+    "location": "Remote",
+    "apply_url": "https://example.com/jobs/data-engineer",
+    "source_job_id": "acme-123",
+    "portal_type": "greenhouse",
+    "salary_text": "$140,000 - $170,000",
+    "posted_at": "2026-03-10",
+    "found_at": "2026-03-12T08:15:00Z"
+  },
+  {
+    "source": "referral",
+    "company": "Signal Ops",
+    "title": "Analytics Engineer",
+    "location": "San Jose, CA",
+    "apply_url": "https://example.com/jobs/analytics-engineer"
+  }
+]

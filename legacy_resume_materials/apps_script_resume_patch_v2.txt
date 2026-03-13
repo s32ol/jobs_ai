@@ -1,0 +1,906 @@
+const DOC_ID = '1UN_LVhciOlAJG2KT4me4p4Ga4L7Wm-J4KsdMx8L_vgo';
+
+const RESUME_SOURCE = String.raw`ROBERT MORALES
+Sacramento, CA
+916-767-9172
+robertmorales.coder@gmail.com
+github.com/s32ol | linkedin.com/in/s32ol
+
+DATA ENGINEER — TELEMETRY PLATFORMS | PYTHON | BIGQUERY
+
+SUMMARY
+
+Software-oriented Data Engineer with 5+ years owning automation, backend systems, and
+analytics pipelines across Python and Google internal platforms. Built production tooling
+for Google Nest and the HHR Routines Project Google Home App, integrating multiple
+telemetry and API sources, processing thousands of signals per cycle, and standardizing
+adoption and crash reporting across 10+ engineering teams.
+
+Served as SSOT owner through 4+ years of release cycles, supporting launches from
+v1.56–v3.74, handling P0 incidents, and participating in on-call rotations for millions
+of consumer devices across speakers, smart displays, glass devices, and 3P integrations.
+
+SKILLS
+
+Python • SQL (BigQuery) • JavaScript / Google Apps Script • Java • Bash
+Data Pipelines • JSON Data Modeling • Telemetry Analytics • Looker Dashboards
+Backend Automation • Internal APIs • Workflow Orchestration
+On-call P0/P1 Incident Response • Root Cause Analysis • SSOT Ownership
+Google Cloud Platform • Git • Cross-functional Execution
+
+EMPLOYMENT HISTORY
+
+Data Analyst & QA Engineer
+Google — Nest Devices | Sacramento, CA
+Mar 2023 – April 2025
+
+• Built Looker dashboards using PLX, Culver, and internal telemetry pipelines
+  to monitor crash rates, OTA stability, AP disconnects, sound features,
+  and overall device health.
+
+• Designed and automated the Nest Speaker Overview dashboard used by TPMs
+  and product leads for operational monitoring.
+
+• Developed Python automation scripts for the Nest Camera Web Portal including
+  test execution, telemetry extraction, and validation workflows.
+
+• Simulated 3P LSDK smart-device routines for reproducible compatibility testing.
+
+• Served as QA owner for Home & Away Routines (HHR), validating releases
+  from v1.56 through v3.74+.
+
+• Participated in on-call rotations supporting millions of consumer devices
+  (3P integrations, speakers, glass, NPI) responding to P0/P1 incidents
+  and coordinating with engineering teams.
+
+Software Developer / Data Engineer
+Google — Google Home App | Sacramento, CA
+Dec 2020 – Mar 2023
+
+• Built and owned backend automation tools and data pipelines using Python, SQL,
+  Java, AppScript, and Google Cloud Platform.
+
+• Developed workflow automation synchronizing Looker dashboards, AppSheet tools,
+  and BigQuery datasets across engineering teams.
+
+• Modeled complex JSON telemetry and program datasets into normalized analytics
+  schemas supporting operational reporting.
+
+• Built end-to-end Looker Studio dashboards surfacing feature adoption, timelines,
+  workload tracking, and engineering risk signals across 10+ partner teams.
+
+• Standardized reporting definitions and tracking logic program-wide, serving as
+  the Single Source of Truth (SSOT) for feature adoption readiness.
+
+• Supported annual feature request and release cycles by translating engineering
+  telemetry signals into decision-ready insights for leadership.
+
+
+Data Specialist
+OnwardCA | Fresno, CA
+2020
+
+• Standardized 1,500+ records across Salesforce and NoSQL systems supporting
+  statewide digital resource indexing.
+
+• Improved metadata structures, classification logic, and bilingual
+  (Spanish/English) dataset accessibility.
+
+
+Software Developer
+Learn to Achieve (501c) | Sacramento, CA
+2017 – 2020
+
+• Built Python GUI tools supporting GEAR-UP student dashboards and analytics.
+
+• Developed MTSS reporting tools enabling early-risk identification
+  for school districts.
+
+• Maintained ASP.NET applications supporting district-wide reporting
+  and automated data ingestion.
+
+
+PROGRAMS & FELLOWSHIPS
+
+Data Scientist / Software Engineer (Immersive Program)
+General Assembly | San Francisco, CA
+2020
+
+• Designed and implemented forecasting systems using Python, Pandas, NumPy,
+  XGBoost, and Random Forest.
+
+• Built and backtested Bitcoin price prediction models using technical
+  indicators including Bollinger Bands and evaluated model performance
+  using MAE and RMSE.
+
+• Developed reproducible analysis pipelines for feature engineering,
+  model comparison, and visualization.
+
+• Presented findings and technical tradeoffs to both technical and
+  non-technical audiences.
+
+
+Machine Learning Engineer (Fellow)
+USF Data Institute | San Francisco, CA
+2019
+
+• Built and evaluated deep learning models across computer vision,
+  NLP, and recommendation systems using Python and fast.ai.
+
+• Implemented full ML workflows including preprocessing,
+  model training, validation, and performance evaluation.
+
+• Compared model architectures and hyperparameter tuning strategies
+  to optimize model accuracy and generalization.
+
+• Communicated results through structured notebooks
+  and technical presentations.
+
+
+PROJECTS
+
+Kali Engine — Bitcoin Predictor (GitHub)
+
+Production-grade quantitative trading research framework including:
+
+• Live market data ingestion pipelines
+• Technical analysis and microstructure feature engineering
+• Multi-horizon machine learning models
+• Real-time decision engine with risk guards
+• Prometheus and Grafana monitoring dashboards
+• Paper-trading simulation and event logging
+
+
+EDUCATION
+
+B.S. Finance — Information Systems & Technology Management
+San Francisco State University
+2015 – 2017`;
+
+const PAGE = {
+  width: 612,
+  height: 792,
+  marginTop: 36,
+  marginBottom: 32,
+  marginLeft: 40,
+  marginRight: 40,
+};
+
+const STYLE = {
+  bodyFont: 'Arial',
+  accentFont: 'Georgia',
+  textColor: '#202124',
+  mutedColor: '#5f6368',
+  linkColor: '#1155cc',
+  nameSize: 18,
+  contactSize: 8.5,
+  headlineSize: 9.5,
+  sectionSize: 10,
+  bodySize: 9.25,
+  metaSize: 8.9,
+};
+
+function rebuildRobertMoralesResume() {
+  const parsedResume = parseResumeSource_(RESUME_SOURCE);
+  logParsedResumeEntries_(parsedResume);
+  const resume = mapResumeToTargetLayout_(parsedResume);
+  const doc = DocumentApp.openById(DOC_ID);
+  const body = doc.getBody();
+
+  resetDocument_(doc, body);
+  appendHeader_(body, resume.header);
+  appendSectionHeader_(body, 'Summary');
+  appendBodyParagraph_(body, resume.summary);
+
+  appendSectionHeader_(body, 'Core Technologies');
+  resume.coreTechnologies.forEach(function(line) {
+    appendBodyParagraph_(body, line, { size: 9.0, spacingAfter: 0, spacingBefore: 0 });
+  });
+
+  appendSectionHeader_(body, 'Selected Systems Impact');
+  resume.selectedSystemsImpact.forEach(function(bullet) {
+    appendBullet_(body, bullet);
+  });
+
+  appendSectionHeader_(body, 'Professional Experience');
+  resume.professionalExperience.forEach(function(entry, index) {
+    appendExperienceEntry_(body, entry, index === 0 ? 0 : 2);
+  });
+
+  appendSectionHeader_(body, 'Independent Engineering & AI Research');
+  resume.independentResearch.forEach(function(entry, index) {
+    appendExperienceEntry_(body, entry, index === 0 ? 0 : 2);
+  });
+
+  appendSectionHeader_(body, 'Early Career — QA Automation & Device Testing');
+  resume.earlyCareerQa.forEach(function(entry) {
+    appendExperienceEntry_(body, entry, 0);
+  });
+
+  appendSectionHeader_(body, 'Projects');
+  resume.projects.forEach(function(project) {
+    appendProjectEntry_(body, project);
+  });
+
+  appendSectionHeader_(body, 'Education');
+  resume.education.forEach(function(entry) {
+    appendEducationEntry_(body, entry);
+  });
+
+  doc.saveAndClose();
+}
+
+function resetDocument_(doc, body) {
+  body.clear();
+  while (body.getNumChildren() > 0) {
+    body.removeChild(body.getChild(0));
+  }
+  const header = doc.getHeader();
+  if (header) {
+    header.clear();
+  }
+  const footer = doc.getFooter();
+  if (footer) {
+    footer.clear();
+  }
+
+  body
+      .setPageWidth(PAGE.width)
+      .setPageHeight(PAGE.height)
+      .setMarginTop(PAGE.marginTop)
+      .setMarginBottom(PAGE.marginBottom)
+      .setMarginLeft(PAGE.marginLeft)
+      .setMarginRight(PAGE.marginRight);
+}
+
+function appendHeader_(body, header) {
+  const name = body.appendParagraph(header.name);
+  name
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+      .setSpacingBefore(0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  applyTextStyle_(name.editAsText(), {
+    fontFamily: STYLE.accentFont,
+    fontSize: STYLE.nameSize,
+    bold: true,
+  });
+
+  const contactLine = [
+    header.location,
+    header.phone,
+    header.email,
+    header.links[0],
+    header.links[1],
+  ].join(' | ');
+  const contact = body.appendParagraph(contactLine);
+  contact
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+      .setSpacingBefore(0)
+      .setSpacingAfter(1)
+      .setLineSpacing(1.0);
+  const contactText = applyTextStyle_(contact.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: STYLE.contactSize,
+    color: STYLE.mutedColor,
+  });
+  applyInlineLinks_(contactText, contactLine, [
+    { label: header.email, url: 'mailto:' + header.email },
+    { label: header.links[0], url: addHttps_(header.links[0]) },
+    { label: header.links[1], url: addHttps_(header.links[1]) },
+  ]);
+
+  const headline = body.appendParagraph(header.headline);
+  headline
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+      .setSpacingBefore(0)
+      .setSpacingAfter(5)
+      .setLineSpacing(1.0);
+  applyTextStyle_(headline.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: STYLE.headlineSize,
+    bold: true,
+    color: STYLE.textColor,
+  });
+}
+
+function appendSectionHeader_(body, title) {
+  const paragraph = body.appendParagraph(title.toUpperCase());
+  paragraph
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(5)
+      .setSpacingAfter(2)
+      .setLineSpacing(1.0);
+  applyTextStyle_(paragraph.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: STYLE.sectionSize,
+    bold: true,
+    color: STYLE.textColor,
+  });
+}
+
+function appendBodyParagraph_(body, text, options) {
+  const config = options || {};
+  const paragraph = body.appendParagraph(text);
+  paragraph
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(config.spacingBefore == null ? 0 : config.spacingBefore)
+      .setSpacingAfter(config.spacingAfter == null ? 1 : config.spacingAfter)
+      .setLineSpacing(config.lineSpacing || 1.03);
+  applyTextStyle_(paragraph.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: config.size || STYLE.bodySize,
+    color: config.color || STYLE.textColor,
+    italic: !!config.italic,
+    bold: !!config.bold,
+  });
+  return paragraph;
+}
+
+function appendBullet_(body, text) {
+  const item = body.appendListItem(text);
+  item
+      .setGlyphType(DocumentApp.GlyphType.BULLET)
+      .setIndentStart(18)
+      .setIndentFirstLine(0)
+      .setSpacingBefore(0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  applyTextStyle_(item.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: STYLE.bodySize,
+    color: STYLE.textColor,
+  });
+}
+
+function appendExperienceEntry_(body, entry, spacingBefore) {
+  const titleLine = body.appendParagraph(entry.title + '\t' + entry.date);
+  titleLine
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(spacingBefore || 0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  const titleText = applyTextStyle_(titleLine.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: 9.45,
+    color: STYLE.textColor,
+  });
+  const titleEnd = entry.title.length - 1;
+  const fullTitleLine = titleLine.getText();
+  if (titleEnd >= 0) {
+    titleText.setBold(0, titleEnd, true);
+  }
+  const dateStart = entry.title.length + 1;
+  if (dateStart < fullTitleLine.length) {
+    titleText
+        .setBold(dateStart, fullTitleLine.length - 1, false)
+        .setForegroundColor(dateStart, fullTitleLine.length - 1, STYLE.mutedColor);
+  }
+
+  const orgLine = body.appendParagraph(entry.org);
+  orgLine
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  applyTextStyle_(orgLine.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: STYLE.metaSize,
+    italic: true,
+    color: STYLE.mutedColor,
+  });
+
+  entry.bullets.forEach(function(bullet) {
+    appendBullet_(body, bullet);
+  });
+}
+
+function appendProjectEntry_(body, project) {
+  const title = body.appendParagraph(project.title);
+  title
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  applyTextStyle_(title.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: 9.45,
+    bold: true,
+    color: STYLE.textColor,
+  });
+
+  appendBodyParagraph_(body, project.summary, { size: STYLE.bodySize, spacingAfter: 0 });
+}
+
+function appendEducationEntry_(body, entry) {
+  const degreeLine = body.appendParagraph(entry.title + '\t' + entry.date);
+  degreeLine
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  const degreeText = applyTextStyle_(degreeLine.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: 9.45,
+    color: STYLE.textColor,
+  });
+  if (entry.title.length > 0) {
+    degreeText.setBold(0, entry.title.length - 1, true);
+  }
+  const degreeDateStart = entry.title.length + 1;
+  const degreeLineText = degreeLine.getText();
+  if (degreeDateStart < degreeLineText.length) {
+    degreeText
+        .setBold(degreeDateStart, degreeLineText.length - 1, false)
+        .setForegroundColor(degreeDateStart, degreeLineText.length - 1, STYLE.mutedColor);
+  }
+
+  const schoolLine = body.appendParagraph(entry.org);
+  schoolLine
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  applyTextStyle_(schoolLine.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: STYLE.metaSize,
+    italic: true,
+    color: STYLE.mutedColor,
+  });
+}
+
+function applyTextStyle_(text, options) {
+  text
+      .setFontFamily(options.fontFamily || STYLE.bodyFont)
+      .setFontSize(options.fontSize || STYLE.bodySize)
+      .setForegroundColor(options.color || STYLE.textColor)
+      .setBold(!!options.bold)
+      .setItalic(!!options.italic);
+  return text;
+}
+
+function applyInlineLinks_(text, fullText, links) {
+  links.forEach(function(link) {
+    const start = fullText.indexOf(link.label);
+    if (start === -1) {
+      return;
+    }
+    const end = start + link.label.length - 1;
+    text
+        .setLinkUrl(start, end, link.url)
+        .setForegroundColor(start, end, STYLE.linkColor);
+  });
+}
+
+function addHttps_(url) {
+  return /^https?:\/\//.test(url) ? url : 'https://' + url;
+}
+
+function parseResumeSource_(source) {
+  const sections = splitIntoSections_(source);
+  return {
+    header: parseHeader_(sections.__header__ || []),
+    summary: parseParagraphs_(sections.SUMMARY || []),
+    skills: parseSkillLines_(sections.SKILLS || []),
+    employmentHistory: parseRoleEntries_(sections['EMPLOYMENT HISTORY'] || []),
+    programsAndFellowships: parseRoleEntries_(sections['PROGRAMS & FELLOWSHIPS'] || []),
+    projects: parseProjectEntries_(sections.PROJECTS || []),
+    education: parseEducationEntries_(sections.EDUCATION || []),
+  };
+}
+
+function splitIntoSections_(source) {
+  const sectionNames = new Set([
+    'SUMMARY',
+    'SKILLS',
+    'EMPLOYMENT HISTORY',
+    'PROGRAMS & FELLOWSHIPS',
+    'PROJECTS',
+    'EDUCATION',
+  ]);
+
+  const sections = { __header__: [] };
+  let current = '__header__';
+  source.replace(/\r/g, '').split('\n').forEach(function(line) {
+    const trimmed = line.trim();
+    if (sectionNames.has(trimmed)) {
+      current = trimmed;
+      sections[current] = [];
+      return;
+    }
+    sections[current].push(line);
+  });
+  return sections;
+}
+
+function parseHeader_(lines) {
+  const compact = lines.map(function(line) {
+    return line.trim();
+  }).filter(Boolean);
+  return {
+    name: compact[0],
+    location: compact[1],
+    phone: compact[2],
+    email: compact[3],
+    links: compact[4].split(/\s+\|\s+/),
+    headline: compact[5],
+  };
+}
+
+function parseParagraphs_(lines) {
+  return splitByBlankRuns_(lines, 1).map(joinWrappedLines_);
+}
+
+function parseSkillLines_(lines) {
+  return lines.map(function(line) {
+    return cleanLine_(line);
+  }).filter(Boolean);
+}
+
+function parseRoleEntries_(lines) {
+  const cleanLines = lines.map(cleanLine_).filter(Boolean);
+  const entries = [];
+  let current = null;
+
+  for (let index = 0; index < cleanLines.length; index += 1) {
+    if (isLikelyRoleHeaderAt_(cleanLines, index)) {
+      if (current) {
+        entries.push(finalizeRoleEntry_(current));
+      }
+      current = {
+        title: cleanLines[index],
+        org: cleanLines[index + 1],
+        date: cleanLines[index + 2],
+        bodyLines: [],
+      };
+      index += 2;
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    current.bodyLines.push(cleanLines[index]);
+  }
+
+  if (current) {
+    entries.push(finalizeRoleEntry_(current));
+  }
+
+  return entries;
+}
+
+function parseProjectEntries_(lines) {
+  return splitByBlankRuns_(lines, 2).map(function(block) {
+    const clean = block.map(cleanLine_).filter(Boolean);
+    let bulletStart = clean.findIndex(function(line) {
+      return /^•\s*/.test(line);
+    });
+    if (bulletStart === -1) {
+      bulletStart = clean.length;
+    }
+    return {
+      title: clean[0],
+      description: joinWrappedLines_(clean.slice(1, bulletStart)),
+      bullets: parseBullets_(clean.slice(bulletStart)),
+    };
+  });
+}
+
+function parseEducationEntries_(lines) {
+  return splitByBlankRuns_(lines, 2).map(function(block) {
+    const clean = block.map(cleanLine_).filter(Boolean);
+    return {
+      title: clean[0],
+      org: clean[1],
+      date: clean[2],
+    };
+  });
+}
+
+function splitByBlankRuns_(lines, blankRunForSplit) {
+  const blocks = [];
+  let current = [];
+  let blankRun = 0;
+
+  lines.forEach(function(line) {
+    if (!line.trim()) {
+      blankRun += 1;
+      if (blankRun >= blankRunForSplit && current.length) {
+        blocks.push(current);
+        current = [];
+      }
+      return;
+    }
+
+    blankRun = 0;
+    current.push(line);
+  });
+
+  if (current.length) {
+    blocks.push(current);
+  }
+
+  return blocks;
+}
+
+function parseBullets_(lines) {
+  const bullets = [];
+  let current = [];
+
+  lines.forEach(function(line) {
+    const clean = cleanLine_(line);
+    if (!clean) {
+      return;
+    }
+    if (/^•\s*/.test(clean)) {
+      if (current.length) {
+        bullets.push(joinWrappedLines_(current));
+      }
+      current = [clean.replace(/^•\s*/, '')];
+      return;
+    }
+    current.push(clean);
+  });
+
+  if (current.length) {
+    bullets.push(joinWrappedLines_(current));
+  }
+
+  return bullets;
+}
+
+function joinWrappedLines_(lines) {
+  return lines.map(function(line) {
+    return cleanLine_(line);
+  }).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function cleanLine_(line) {
+  return String(line || '').replace(/\s+/g, ' ').trim();
+}
+
+function isLikelyRoleHeaderAt_(lines, index) {
+  const title = lines[index];
+  const org = lines[index + 1];
+  const date = lines[index + 2];
+
+  if (!title || !org || !date) {
+    return false;
+  }
+
+  if (/^•\s*/.test(title) || /^•\s*/.test(org) || /^•\s*/.test(date)) {
+    return false;
+  }
+
+  return looksLikeDateLine_(date);
+}
+
+function looksLikeDateLine_(line) {
+  const normalized = normalizeForMatch_(line);
+  if (!normalized) {
+    return false;
+  }
+
+  if (/\bcurrent\b/.test(normalized)) {
+    return true;
+  }
+
+  const monthPattern = /\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\b/;
+  return /\b(19|20)\d{2}\b/.test(normalized) && (monthPattern.test(normalized) || /\bto\b/.test(normalized) || /\bthrough\b/.test(normalized) || /\bcurrent\b/.test(normalized) || /\b\d{4}\b/.test(normalized));
+}
+
+function finalizeRoleEntry_(entry) {
+  return {
+    title: entry.title,
+    org: entry.org,
+    date: entry.date,
+    bullets: parseBullets_(entry.bodyLines || []),
+  };
+}
+
+function mapResumeToTargetLayout_(resume) {
+  const nest = findEntryByMarkers_(resume.employmentHistory, 'Google Nest role', [
+    ['nest devices'],
+    ['google', 'nest'],
+    ['nest'],
+  ]);
+  const homeApp = findEntryByMarkers_(resume.employmentHistory, 'Google Home / Android role', [
+    ['google home app'],
+    ['google', 'home'],
+    ['home app'],
+    ['google android'],
+    ['android', 'program'],
+    ['android', '1aaa'],
+  ]);
+  const onward = findEntryByMarkers_(resume.employmentHistory, 'OnwardCA role', [
+    ['onwardca'],
+    ['onward'],
+  ]);
+  const learn = findEntryByMarkers_(resume.employmentHistory, 'Learn to Achieve role', [
+    ['learn to achieve'],
+    ['gear up'],
+  ]);
+  const ga = findEntryByMarkers_(resume.programsAndFellowships, 'General Assembly program', [
+    ['general assembly'],
+    ['immersive program'],
+  ]);
+  const usf = findEntryByMarkers_(resume.programsAndFellowships, 'USF Data Institute fellowship', [
+    ['usf data institute'],
+    ['machine learning engineer'],
+    ['fast ai'],
+  ]);
+  const project = findProjectByMarkers_(resume.projects, 'Kali Engine project', [
+    ['kali engine'],
+    ['bitcoin predictor'],
+  ]);
+  const education = resume.education[0];
+
+  return {
+    header: resume.header,
+    summary: resume.summary.join(' '),
+    coreTechnologies: [
+      resume.skills[0],
+      resume.skills.slice(1, 3).join(' • '),
+      resume.skills.slice(3).join(' • '),
+    ],
+    selectedSystemsImpact: [
+      joinSentences_([homeApp.bullets[0], homeApp.bullets[2]]),
+      joinSentences_([homeApp.bullets[3], homeApp.bullets[4]]),
+      nest.bullets[5],
+    ],
+    professionalExperience: [
+      {
+        title: homeApp.title,
+        org: homeApp.org,
+        date: homeApp.date,
+        bullets: [homeApp.bullets[1], homeApp.bullets[5]],
+      },
+      {
+        title: onward.title,
+        org: onward.org,
+        date: onward.date,
+        bullets: [onward.bullets[0]],
+      },
+      {
+        title: learn.title,
+        org: learn.org,
+        date: learn.date,
+        bullets: [learn.bullets[0], learn.bullets[1]],
+      },
+    ],
+    independentResearch: [
+      {
+        title: ga.title,
+        org: ga.org,
+        date: ga.date,
+        bullets: [joinSentences_([ga.bullets[0], ga.bullets[1]])],
+      },
+      {
+        title: usf.title,
+        org: usf.org,
+        date: usf.date,
+        bullets: [joinSentences_([usf.bullets[0], usf.bullets[1]])],
+      },
+    ],
+    earlyCareerQa: [
+      {
+        title: nest.title,
+        org: nest.org,
+        date: nest.date,
+        bullets: [
+          nest.bullets[0],
+          joinSentences_([nest.bullets[2], nest.bullets[3]]),
+          nest.bullets[4],
+        ],
+      },
+    ],
+    projects: [
+      {
+        title: project.title,
+        summary: compactProject_(project),
+      },
+    ],
+    education: [education],
+  };
+}
+
+function joinSentences_(parts) {
+  return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function compactProject_(project) {
+  const featureText = project.bullets.map(function(bullet) {
+    return bullet.replace(/\.$/, '');
+  }).join(', ');
+  return project.description.replace(/:\s*$/, ' ') + featureText + '.';
+}
+
+function logParsedResumeEntries_(resume) {
+  logEntryGroup_('employmentHistory', resume.employmentHistory);
+  logEntryGroup_('programsAndFellowships', resume.programsAndFellowships);
+}
+
+function logEntryGroup_(label, entries) {
+  Logger.log('Parsed ' + label + ' entries: ' + entries.length);
+  entries.forEach(function(entry, index) {
+    Logger.log(
+        label + '[' + index + '] title="' + safeDebugValue_(entry.title) +
+        '" | org="' + safeDebugValue_(entry.org) +
+        '" | date="' + safeDebugValue_(entry.date) +
+        '" | bullets=' + ((entry.bullets || []).length));
+  });
+}
+
+function safeDebugValue_(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function findEntryByMarkers_(entries, label, markerGroups) {
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+    const entry = entries[entryIndex];
+    const haystack = normalizeForMatch_([entry.title, entry.org, entry.date].join(' '));
+    if (matchesAnyMarkerGroup_(haystack, markerGroups)) {
+      return entry;
+    }
+  }
+
+  throw new Error(
+      'Missing expected resume entry for "' + label + '". Tried marker groups: ' +
+      formatMarkerGroups_(markerGroups) + '. Parsed entries: ' + describeEntries_(entries));
+}
+
+function findProjectByMarkers_(projects, label, markerGroups) {
+  for (let index = 0; index < projects.length; index += 1) {
+    const project = projects[index];
+    const haystack = normalizeForMatch_([project.title, project.description].join(' '));
+    if (matchesAnyMarkerGroup_(haystack, markerGroups)) {
+      return project;
+    }
+  }
+
+  throw new Error(
+      'Missing expected project for "' + label + '". Tried marker groups: ' +
+      formatMarkerGroups_(markerGroups) + '. Parsed projects: ' + describeProjects_(projects));
+}
+
+function matchesAnyMarkerGroup_(haystack, markerGroups) {
+  return markerGroups.some(function(group) {
+    return group.every(function(marker) {
+      return haystack.indexOf(normalizeForMatch_(marker)) !== -1;
+    });
+  });
+}
+
+function normalizeForMatch_(text) {
+  return String(text || '')
+      .toLowerCase()
+      .replace(/[—–-]/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+}
+
+function formatMarkerGroups_(markerGroups) {
+  return markerGroups.map(function(group) {
+    return '[' + group.join(', ') + ']';
+  }).join(' OR ');
+}
+
+function describeEntries_(entries) {
+  return entries.map(function(entry, index) {
+    return (
+      '#' + index +
+      ' title="' + safeDebugValue_(entry.title) +
+      '" org="' + safeDebugValue_(entry.org) +
+      '" date="' + safeDebugValue_(entry.date) + '"'
+    );
+  }).join(' ; ');
+}
+
+function describeProjects_(projects) {
+  return projects.map(function(project, index) {
+    return '#' + index + ' title="' + safeDebugValue_(project.title) + '"';
+  }).join(' ; ');
+}

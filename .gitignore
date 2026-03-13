@@ -1,0 +1,54 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.local
+.env.*
+!.env.example
+
+# Editor settings
+.vscode/
+.idea/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local artifacts
+/artifacts/
+/output/
+/logs/
+/exports/
+/sessions/
+*.log
+/data/jobs_ai.db
+/data/*.db
+/data/*.db-journal
+/data/*.db-shm
+/data/*.db-wal
+/data/*.sqlite
+/data/*.sqlite-journal
+/data/*.sqlite-shm
+/data/*.sqlite-wal
+/data/*.sqlite3
+/data/exports/*
+!/data/exports/.gitkeep
+
+# Processed data outputs
+/data/processed/*
+!/data/processed/.gitkeep

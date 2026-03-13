@@ -1,0 +1,157 @@
+ROBERT MORALES
+Sacramento, CA
+916-767-9172
+robertmorales.coder@gmail.com
+github.com/s32ol | linkedin.com/in/s32ol
+
+DATA ENGINEER — TELEMETRY PLATFORMS | PYTHON | BIGQUERY
+
+SUMMARY
+
+Software-oriented Data Engineer with 5+ years owning automation, backend systems, and
+analytics pipelines across Python and Google internal platforms. Built production tooling
+for Google Nest and the HHR Routines Project Google Home App, integrating multiple
+telemetry and API sources, processing thousands of signals per cycle, and standardizing
+adoption and crash reporting across 10+ engineering teams.
+
+Served as SSOT owner through 4+ years of release cycles, supporting launches from
+v1.56–v3.74, handling P0 incidents, and participating in on-call rotations for millions
+of consumer devices across speakers, smart displays, glass devices, and 3P integrations.
+
+SKILLS
+
+Python • SQL (BigQuery) • JavaScript / Google Apps Script • Java • Bash  
+Data Pipelines • JSON Data Modeling • Telemetry Analytics • Looker Dashboards  
+Backend Automation • Internal APIs • Workflow Orchestration  
+On-call P0/P1 Incident Response • Root Cause Analysis • SSOT Ownership  
+Google Cloud Platform • Git • Cross-functional Execution
+
+EMPLOYMENT HISTORY
+
+Data Analyst & QA Engineer  
+Google — Nest Devices | Sacramento, CA  
+Mar 2023 – April 2025
+
+• Built Looker dashboards using PLX, Culver, and internal telemetry pipelines
+  to monitor crash rates, OTA stability, AP disconnects, sound features,
+  and overall device health.
+
+• Designed and automated the Nest Speaker Overview dashboard used by TPMs
+  and product leads for operational monitoring.
+
+• Developed Python automation scripts for the Nest Camera Web Portal including
+  test execution, telemetry extraction, and validation workflows.
+
+• Simulated 3P LSDK smart-device routines for reproducible compatibility testing.
+
+• Served as QA owner for Home & Away Routines (HHR), validating releases
+  from v1.56 through v3.74+.
+
+• Participated in on-call rotations supporting millions of consumer devices
+  (3P integrations, speakers, glass, NPI) responding to P0/P1 incidents
+  and coordinating with engineering teams.
+
+Software Developer / Data Engineer  
+Google — Google Home App | Sacramento, CA  
+Dec 2020 – Mar 2023
+
+• Built and owned backend automation tools and data pipelines using Python, SQL,
+  Java, AppScript, and Google Cloud Platform.
+
+• Developed workflow automation synchronizing Looker dashboards, AppSheet tools,
+  and BigQuery datasets across engineering teams.
+
+• Modeled complex JSON telemetry and program datasets into normalized analytics
+  schemas supporting operational reporting.
+
+• Built end-to-end Looker Studio dashboards surfacing feature adoption, timelines,
+  workload tracking, and engineering risk signals across 10+ partner teams.
+
+• Standardized reporting definitions and tracking logic program-wide, serving as
+  the Single Source of Truth (SSOT) for feature adoption readiness.
+
+• Supported annual feature request and release cycles by translating engineering
+  telemetry signals into decision-ready insights for leadership.
+
+
+Data Specialist  
+OnwardCA | Fresno, CA  
+2020
+
+• Standardized 1,500+ records across Salesforce and NoSQL systems supporting
+  statewide digital resource indexing.
+
+• Improved metadata structures, classification logic, and bilingual
+  (Spanish/English) dataset accessibility.
+
+
+Software Developer  
+Learn to Achieve (501c) | Sacramento, CA  
+2017 – 2020
+
+• Built Python GUI tools supporting GEAR-UP student dashboards and analytics.
+
+• Developed MTSS reporting tools enabling early-risk identification
+  for school districts.
+
+• Maintained ASP.NET applications supporting district-wide reporting
+  and automated data ingestion.
+
+
+PROGRAMS & FELLOWSHIPS
+
+Data Scientist / Software Engineer (Immersive Program)  
+General Assembly | San Francisco, CA  
+2020
+
+• Designed and implemented forecasting systems using Python, Pandas, NumPy,
+  XGBoost, and Random Forest.
+
+• Built and backtested Bitcoin price prediction models using technical
+  indicators including Bollinger Bands and evaluated model performance
+  using MAE and RMSE.
+
+• Developed reproducible analysis pipelines for feature engineering,
+  model comparison, and visualization.
+
+• Presented findings and technical tradeoffs to both technical and
+  non-technical audiences.
+
+
+Machine Learning Engineer (Fellow)  
+USF Data Institute | San Francisco, CA  
+2019
+
+• Built and evaluated deep learning models across computer vision,
+  NLP, and recommendation systems using Python and fast.ai.
+
+• Implemented full ML workflows including preprocessing,
+  model training, validation, and performance evaluation.
+
+• Compared model architectures and hyperparameter tuning strategies
+  to optimize model accuracy and generalization.
+
+• Communicated results through structured notebooks
+  and technical presentations.
+
+
+PROJECTS
+
+Kali Engine — Bitcoin Predictor (GitHub)
+
+Production-grade quantitative trading research framework including:
+
+• Live market data ingestion pipelines  
+• Technical analysis and microstructure feature engineering  
+• Multi-horizon machine learning models  
+• Real-time decision engine with risk guards  
+• Prometheus and Grafana monitoring dashboards  
+• Paper-trading simulation and event logging
+
+
+EDUCATION
+
+B.S. Finance — Information Systems & Technology Management  
+San Francisco State University  
+2015 – 2017
+

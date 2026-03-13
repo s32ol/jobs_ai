@@ -1,0 +1,624 @@
+const DOC_ID = '1X3M0dKiJ7GrGWJWKAzVNXorXzt8z52AAanPV8AvE5pE';
+
+const RESUME_SOURCE = String.raw`ROBERT MORALES
+Bay Area / Sacramento, CA
+415-900-2819
+robert.morales.eng@gmail.com
+linkedin.com/in/s32ol
+
+Availability: Open schedule including evenings and weekends
+
+PROFILE
+
+Dependable and hardworking team member with experience in retail, fabrication shop environments, and operational support roles. Strong track record of reliability, teamwork, and learning new systems quickly. Comfortable working in fast-paced environments while maintaining organized workspaces and completing tasks efficiently.
+
+SKILLS
+
+Customer Service
+Inventory & Stocking
+Cash Handling
+Team Collaboration
+Problem Solving
+Data Entry
+Organization & Documentation
+Time Management
+Reliability
+Multitasking
+
+WORK EXPERIENCE
+
+Backroom Merchandise Handler
+Target | Sacramento, CA
+2015 – 2017
+
+• Stocked merchandise and organized inventory to support daily store operations
+• Assisted with unloading shipments and preparing products for the sales floor
+• Maintained organized backroom storage areas for efficient product access
+• Worked with team members to meet stocking deadlines during busy store periods
+
+Fabrication Assistant
+Jaytech Fabrication | Sacramento, CA
+2013 – 2015
+
+• Assisted technicians with fabrication and machining work in a metal shop environment
+• Operated CNC machines, lathes, and precision cutting tools
+• Performed TIG and arc welding support during fabrication and assembly work
+• Measured and prepared materials for accurate machining and fabrication tasks
+• Maintained tools and followed shop safety procedures
+
+Operations Support
+Google Android Program | Sacramento, CA
+2023 – 2025
+
+• Maintained internal reports used by teams to track project progress and tasks
+• Organized operational data and helped teams identify issues requiring follow-up
+• Assisted teams with documentation and coordination across projects
+
+Quality Assurance Support
+Google Nest | Sacramento, CA
+2020 – 2023
+
+• Reviewed system reports and documented issues to assist troubleshooting
+• Supported testing and validation tasks during product updates
+• Coordinated with teams to track issues and maintain accurate records
+
+Data Specialist
+OnwardCA | Fresno, CA
+2020
+
+• Organized and standardized 1,500+ records across statewide resource databases
+• Improved data consistency and documentation for internal teams
+
+Software Support Assistant
+Learn to Achieve | Sacramento, CA
+2017 – 2020
+
+• Assisted staff with reporting tools and documentation for education programs
+• Maintained internal data records and supported program tracking efforts
+
+EDUCATION
+
+B.S. Finance — Information Systems & Technology Management
+San Francisco State University`;
+
+const PAGE = {
+  width: 612,
+  height: 792,
+  marginTop: 34,
+  marginBottom: 30,
+  marginLeft: 38,
+  marginRight: 38,
+};
+
+const STYLE = {
+  bodyFont: 'Arial',
+  accentFont: 'Georgia',
+  textColor: '#202124',
+  mutedColor: '#5f6368',
+  linkColor: '#1155cc',
+  nameSize: 17.5,
+  contactSize: 8.4,
+  sectionSize: 9.8,
+  bodySize: 8.85,
+  metaSize: 8.45,
+};
+
+function rebuildRobertMoralesResume() {
+  const resume = parseResumeSource_(RESUME_SOURCE);
+  const doc = DocumentApp.openById(DOC_ID);
+  const body = doc.getBody();
+
+  resetDocument_(doc, body);
+  appendHeader_(body, resume.header);
+
+  appendSectionHeader_(body, 'Profile', { spacingBefore: 4 });
+  resume.profile.forEach(function(paragraph, index) {
+    appendBodyParagraph_(body, paragraph, {
+      size: 8.95,
+      spacingBefore: index === 0 ? 0 : 1,
+      spacingAfter: 0,
+      lineSpacing: 1.02,
+    });
+  });
+
+  appendSectionHeader_(body, 'Skills');
+  appendBodyParagraph_(body, resume.skills.join(' • '), {
+    size: 8.8,
+    spacingAfter: 0,
+    lineSpacing: 1.02,
+  });
+
+  appendSectionHeader_(body, 'Work Experience');
+  resume.workExperience.forEach(function(entry, index) {
+    appendExperienceEntry_(body, entry, index === 0 ? 0 : 3);
+  });
+
+  appendSectionHeader_(body, 'Education');
+  resume.education.forEach(function(entry, index) {
+    appendEducationEntry_(body, entry, index === 0 ? 0 : 2);
+  });
+
+  doc.saveAndClose();
+}
+
+function resetDocument_(doc, body) {
+  body.clear();
+
+  const header = doc.getHeader();
+  if (header) {
+    header.clear();
+  }
+
+  const footer = doc.getFooter();
+  if (footer) {
+    footer.clear();
+  }
+
+  body
+      .setPageWidth(PAGE.width)
+      .setPageHeight(PAGE.height)
+      .setMarginTop(PAGE.marginTop)
+      .setMarginBottom(PAGE.marginBottom)
+      .setMarginLeft(PAGE.marginLeft)
+      .setMarginRight(PAGE.marginRight);
+}
+
+function appendHeader_(body, header) {
+  const name = takeReusableParagraph_(body, header.name);
+  name
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+      .setSpacingBefore(0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  applyTextStyle_(name.editAsText(), {
+    fontFamily: STYLE.accentFont,
+    fontSize: STYLE.nameSize,
+    bold: true,
+  });
+
+  const contactParts = [header.location, header.phone, header.email].concat(header.links).filter(Boolean);
+  const contactLine = contactParts.join(' | ');
+  if (contactLine) {
+    const contact = body.appendParagraph(contactLine);
+    contact
+        .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+        .setSpacingBefore(0)
+        .setSpacingAfter(1)
+        .setLineSpacing(1.0);
+    const contactText = applyTextStyle_(contact.editAsText(), {
+      fontFamily: STYLE.bodyFont,
+      fontSize: STYLE.contactSize,
+      color: STYLE.mutedColor,
+    });
+
+    const links = [];
+    if (header.email) {
+      links.push({ label: header.email, url: 'mailto:' + header.email });
+    }
+    header.links.forEach(function(link) {
+      links.push({ label: link, url: addHttps_(link) });
+    });
+    applyInlineLinks_(contactText, contactLine, links);
+  }
+
+  if (header.availability) {
+    const availability = body.appendParagraph(header.availability);
+    availability
+        .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+        .setSpacingBefore(0)
+        .setSpacingAfter(4)
+        .setLineSpacing(1.0);
+    applyTextStyle_(availability.editAsText(), {
+      fontFamily: STYLE.bodyFont,
+      fontSize: 8.55,
+      italic: true,
+      color: STYLE.textColor,
+    });
+  }
+}
+
+function appendSectionHeader_(body, title, options) {
+  const config = options || {};
+  const paragraph = body.appendParagraph(title.toUpperCase());
+  paragraph
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(config.spacingBefore == null ? 5 : config.spacingBefore)
+      .setSpacingAfter(config.spacingAfter == null ? 1 : config.spacingAfter)
+      .setLineSpacing(1.0);
+  applyTextStyle_(paragraph.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: STYLE.sectionSize,
+    bold: true,
+    color: STYLE.textColor,
+  });
+}
+
+function appendBodyParagraph_(body, text, options) {
+  const config = options || {};
+  const paragraph = body.appendParagraph(text);
+  paragraph
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(config.spacingBefore == null ? 0 : config.spacingBefore)
+      .setSpacingAfter(config.spacingAfter == null ? 1 : config.spacingAfter)
+      .setLineSpacing(config.lineSpacing || 1.02);
+  applyTextStyle_(paragraph.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: config.size || STYLE.bodySize,
+    color: config.color || STYLE.textColor,
+    italic: !!config.italic,
+    bold: !!config.bold,
+  });
+  return paragraph;
+}
+
+function appendBullet_(body, text) {
+  const item = body.appendListItem(text);
+  item
+      .setGlyphType(DocumentApp.GlyphType.BULLET)
+      .setIndentStart(14)
+      .setIndentFirstLine(0)
+      .setSpacingBefore(0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+  applyTextStyle_(item.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: STYLE.bodySize,
+    color: STYLE.textColor,
+  });
+}
+
+function appendExperienceEntry_(body, entry, spacingBefore) {
+  const titleText = entry.date ? entry.title + '\t' + entry.date : entry.title;
+  const titleLine = body.appendParagraph(titleText);
+  titleLine
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(spacingBefore || 0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+
+  const styledTitle = applyTextStyle_(titleLine.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: 9.05,
+    color: STYLE.textColor,
+  });
+  if (entry.title) {
+    styledTitle.setBold(0, entry.title.length - 1, true);
+  }
+  if (entry.date) {
+    const dateStart = entry.title.length + 1;
+    styledTitle
+        .setBold(dateStart, titleText.length - 1, false)
+        .setForegroundColor(dateStart, titleText.length - 1, STYLE.mutedColor);
+  }
+
+  if (entry.org) {
+    const orgLine = body.appendParagraph(entry.org);
+    orgLine
+        .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+        .setSpacingBefore(0)
+        .setSpacingAfter(1)
+        .setLineSpacing(1.0);
+    applyTextStyle_(orgLine.editAsText(), {
+      fontFamily: STYLE.bodyFont,
+      fontSize: STYLE.metaSize,
+      italic: true,
+      color: STYLE.mutedColor,
+    });
+  }
+
+  entry.bullets.forEach(function(bullet) {
+    appendBullet_(body, bullet);
+  });
+}
+
+function appendEducationEntry_(body, entry, spacingBefore) {
+  const degreeText = entry.date ? entry.title + '\t' + entry.date : entry.title;
+  const degreeLine = body.appendParagraph(degreeText);
+  degreeLine
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setSpacingBefore(spacingBefore || 0)
+      .setSpacingAfter(0)
+      .setLineSpacing(1.0);
+
+  const styledDegree = applyTextStyle_(degreeLine.editAsText(), {
+    fontFamily: STYLE.bodyFont,
+    fontSize: 9.0,
+    color: STYLE.textColor,
+  });
+  if (entry.title) {
+    styledDegree.setBold(0, entry.title.length - 1, true);
+  }
+  if (entry.date) {
+    const dateStart = entry.title.length + 1;
+    styledDegree
+        .setBold(dateStart, degreeText.length - 1, false)
+        .setForegroundColor(dateStart, degreeText.length - 1, STYLE.mutedColor);
+  }
+
+  if (entry.org) {
+    const schoolLine = body.appendParagraph(entry.org);
+    schoolLine
+        .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+        .setSpacingBefore(0)
+        .setSpacingAfter(0)
+        .setLineSpacing(1.0);
+    applyTextStyle_(schoolLine.editAsText(), {
+      fontFamily: STYLE.bodyFont,
+      fontSize: STYLE.metaSize,
+      italic: true,
+      color: STYLE.mutedColor,
+    });
+  }
+}
+
+function applyTextStyle_(text, options) {
+  text
+      .setFontFamily(options.fontFamily || STYLE.bodyFont)
+      .setFontSize(options.fontSize || STYLE.bodySize)
+      .setForegroundColor(options.color || STYLE.textColor)
+      .setBold(!!options.bold)
+      .setItalic(!!options.italic);
+  return text;
+}
+
+function applyInlineLinks_(text, fullText, links) {
+  links.forEach(function(link) {
+    const start = fullText.indexOf(link.label);
+    if (start === -1) {
+      return;
+    }
+    const end = start + link.label.length - 1;
+    text
+        .setLinkUrl(start, end, link.url)
+        .setForegroundColor(start, end, STYLE.linkColor);
+  });
+}
+
+function addHttps_(url) {
+  return /^https?:\/\//i.test(url) ? url : 'https://' + url;
+}
+
+function takeReusableParagraph_(body, text) {
+  if (body.getNumChildren() === 1) {
+    const child = body.getChild(0);
+    if (child.getType() === DocumentApp.ElementType.PARAGRAPH) {
+      const paragraph = child.asParagraph();
+      if (!paragraph.getText()) {
+        paragraph.setText(text);
+        return paragraph;
+      }
+    }
+  }
+  return body.appendParagraph(text);
+}
+
+function parseResumeSource_(source) {
+  const sections = splitIntoSections_(source);
+  const resume = {
+    header: parseHeader_(sections.__header__ || []),
+    profile: parseParagraphs_(sections.PROFILE || []),
+    skills: parseSimpleList_(sections.SKILLS || []),
+    workExperience: parseRoleEntries_(sections['WORK EXPERIENCE'] || []),
+    education: parseEducationEntries_(sections.EDUCATION || []),
+  };
+
+  assertValue_(resume.header.name, 'Missing resume name in header.');
+  assertValue_(resume.profile.length, 'Missing PROFILE section content.');
+  assertValue_(resume.skills.length, 'Missing SKILLS section content.');
+  assertValue_(resume.workExperience.length, 'Missing WORK EXPERIENCE entries.');
+  assertValue_(resume.education.length, 'Missing EDUCATION entries.');
+
+  return resume;
+}
+
+function splitIntoSections_(source) {
+  const sectionNames = new Set([
+    'PROFILE',
+    'SKILLS',
+    'WORK EXPERIENCE',
+    'EDUCATION',
+  ]);
+
+  const sections = { __header__: [] };
+  let current = '__header__';
+  source.replace(/\r/g, '').split('\n').forEach(function(line) {
+    const trimmed = line.trim();
+    if (sectionNames.has(trimmed)) {
+      current = trimmed;
+      sections[current] = [];
+      return;
+    }
+    sections[current].push(line);
+  });
+
+  return sections;
+}
+
+function parseHeader_(lines) {
+  const compact = lines.map(cleanLine_).filter(Boolean);
+  const name = compact[0] || '';
+  const location = compact[1] || '';
+  const phone = compact[2] || '';
+  const email = compact[3] || '';
+  const remaining = compact.slice(4);
+
+  const availability = remaining.find(function(line) {
+    return /^Availability:/i.test(line);
+  }) || '';
+
+  const linkLine = remaining.find(function(line) {
+    return !/^Availability:/i.test(line);
+  }) || '';
+
+  return {
+    name: name,
+    location: location,
+    phone: phone,
+    email: email,
+    links: parseLinkLine_(linkLine),
+    availability: availability,
+  };
+}
+
+function parseLinkLine_(line) {
+  return cleanLine_(line).split(/\s+\|\s+/).map(cleanLine_).filter(Boolean);
+}
+
+function parseParagraphs_(lines) {
+  return splitByBlankRuns_(lines, 1).map(joinWrappedLines_).filter(Boolean);
+}
+
+function parseSimpleList_(lines) {
+  return lines.map(cleanLine_).filter(Boolean);
+}
+
+function parseRoleEntries_(lines) {
+  const cleanLines = lines.map(cleanLine_).filter(Boolean);
+  const entries = [];
+  let current = null;
+
+  for (let index = 0; index < cleanLines.length; index += 1) {
+    if (isLikelyRoleHeaderAt_(cleanLines, index)) {
+      if (current) {
+        entries.push(finalizeRoleEntry_(current));
+      }
+      current = {
+        title: cleanLines[index],
+        org: cleanLines[index + 1],
+        date: cleanLines[index + 2],
+        bodyLines: [],
+      };
+      index += 2;
+      continue;
+    }
+
+    if (current) {
+      current.bodyLines.push(cleanLines[index]);
+    }
+  }
+
+  if (current) {
+    entries.push(finalizeRoleEntry_(current));
+  }
+
+  return entries;
+}
+
+function parseEducationEntries_(lines) {
+  return splitByBlankRuns_(lines, 1).map(function(block) {
+    const clean = block.map(cleanLine_).filter(Boolean);
+    return {
+      title: clean[0] || '',
+      org: clean[1] || '',
+      date: clean[2] || '',
+    };
+  }).filter(function(entry) {
+    return entry.title || entry.org || entry.date;
+  });
+}
+
+function splitByBlankRuns_(lines, blankRunForSplit) {
+  const blocks = [];
+  let current = [];
+  let blankRun = 0;
+
+  lines.forEach(function(line) {
+    if (!String(line || '').trim()) {
+      blankRun += 1;
+      if (blankRun >= blankRunForSplit && current.length) {
+        blocks.push(current);
+        current = [];
+      }
+      return;
+    }
+
+    blankRun = 0;
+    current.push(line);
+  });
+
+  if (current.length) {
+    blocks.push(current);
+  }
+
+  return blocks;
+}
+
+function parseBullets_(lines) {
+  const bullets = [];
+  let current = [];
+
+  lines.forEach(function(line) {
+    const clean = cleanLine_(line);
+    if (!clean) {
+      return;
+    }
+
+    if (/^•\s*/.test(clean)) {
+      if (current.length) {
+        bullets.push(joinWrappedLines_(current));
+      }
+      current = [clean.replace(/^•\s*/, '')];
+      return;
+    }
+
+    current.push(clean);
+  });
+
+  if (current.length) {
+    bullets.push(joinWrappedLines_(current));
+  }
+
+  return bullets;
+}
+
+function joinWrappedLines_(lines) {
+  return lines.map(cleanLine_).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function cleanLine_(line) {
+  return String(line || '').replace(/\s+/g, ' ').trim();
+}
+
+function isLikelyRoleHeaderAt_(lines, index) {
+  const title = lines[index];
+  const org = lines[index + 1];
+  const date = lines[index + 2];
+
+  if (!title || !org || !date) {
+    return false;
+  }
+
+  if (/^•\s*/.test(title) || /^•\s*/.test(org) || /^•\s*/.test(date)) {
+    return false;
+  }
+
+  return looksLikeDateLine_(date);
+}
+
+function looksLikeDateLine_(line) {
+  const text = cleanLine_(line);
+  if (!text) {
+    return false;
+  }
+
+  if (/^(19|20)\d{2}$/.test(text)) {
+    return true;
+  }
+
+  return /(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)?\s*(19|20)\d{2}\s*[–—-]\s*(?:present|current|(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)?\s*(19|20)\d{2})/i.test(text);
+}
+
+function finalizeRoleEntry_(entry) {
+  return {
+    title: entry.title,
+    org: entry.org,
+    date: entry.date,
+    bullets: parseBullets_(entry.bodyLines || []),
+  };
+}
+
+function assertValue_(value, message) {
+  if (!value) {
+    throw new Error(message);
+  }
+}
