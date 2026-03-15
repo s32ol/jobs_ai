@@ -62,16 +62,14 @@ def detect_portal_type(
     if parsed_url is None:
         return None
 
+    if _is_greenhouse_apply_url(parsed_url):
+        return "greenhouse"
+    if _is_lever_apply_url(parsed_url):
+        return "lever"
+    if _is_ashby_apply_url(parsed_url):
+        return "ashby"
     netloc = parsed_url.netloc.lower()
     path = parsed_url.path.lower()
-    query = parsed_url.query.lower()
-
-    if "greenhouse.io" in netloc or "gh_jid=" in query:
-        return "greenhouse"
-    if "lever.co" in netloc or "lever-source=" in query or "lever-via=" in query:
-        return "lever"
-    if "ashbyhq.com" in netloc:
-        return "ashby"
     if "myworkdayjobs.com" in netloc:
         return "workday"
     if "workday" in netloc and ("/job/" in path or "/recruiting/" in path):
@@ -228,6 +226,38 @@ def _first_query_value(query: str, key: str) -> str | None:
 
 def _path_segments(path: str) -> tuple[str, ...]:
     return tuple(segment for segment in path.split("/") if segment)
+
+
+def _is_greenhouse_apply_url(parsed_url) -> bool:
+    netloc = parsed_url.netloc.lower()
+    if _has_query_key(parsed_url.query, "gh_jid"):
+        return True
+    if netloc not in {"boards.greenhouse.io", "job-boards.greenhouse.io"}:
+        return False
+    return len(_path_segments(parsed_url.path)) >= 1
+
+
+def _is_lever_apply_url(parsed_url) -> bool:
+    netloc = parsed_url.netloc.lower()
+    if not (netloc.startswith("jobs.") and netloc.endswith("lever.co")):
+        return False
+    if _has_query_key(parsed_url.query, "lever-source") or _has_query_key(parsed_url.query, "lever-via"):
+        return True
+    return len(_path_segments(parsed_url.path)) >= 1
+
+
+def _is_ashby_apply_url(parsed_url) -> bool:
+    netloc = parsed_url.netloc.lower()
+    if not (netloc.startswith("jobs.") and netloc.endswith("ashbyhq.com")):
+        return False
+    if _has_query_key(parsed_url.query, "jobId") or _has_query_key(parsed_url.query, "jobid"):
+        return True
+    return len(_path_segments(parsed_url.path)) >= 1
+
+
+def _has_query_key(query: str, key: str) -> bool:
+    normalized_key = key.lower()
+    return any(query_key.lower() == normalized_key for query_key, _ in parse_qsl(query, keep_blank_values=True))
 
 
 def _greenhouse_job_path(path: str) -> bool:

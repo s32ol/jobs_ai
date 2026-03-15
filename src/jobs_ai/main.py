@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
+from .collect.models import CollectRunReport
+from .source_seed.models import SourceSeedRunReport
 from .application_tracking import ApplicationStatusDetail, ApplicationStatusSnapshot
 from .application_assist import ApplicationAssist
 from .config import GEOGRAPHY_PRIORITY, SEARCH_PRIORITY, TARGET_ROLES, Settings
@@ -202,6 +204,186 @@ def render_import_report(
                 (f"Import a fresh lead batch with {_cli_example(f'import {input_path}')}",),
             )
     return "\n".join(lines)
+
+
+def render_collect_report(report: CollectRunReport) -> str:
+    artifact_paths = report.artifact_paths
+    assert artifact_paths is not None
+
+    status = "success"
+    if report.skipped_count and not (report.collected_count or report.manual_review_count):
+        status = "completed with skips"
+    elif report.skipped_count:
+        status = "success with skips"
+
+    lines = [
+        "jobs_ai collect",
+        f"run id: {report.run_id or artifact_paths.output_dir.name}",
+        f"output dir: {artifact_paths.output_dir}",
+        f"created_at: {report.created_at}",
+        f"finished_at: {report.finished_at or report.created_at}",
+        f"input sources: {report.input_source_count}",
+        f"collected automatically: {report.collected_count}",
+        f"manual review needed: {report.manual_review_count}",
+        f"skipped: {report.skipped_count}",
+        f"timeout seconds: {report.timeout_seconds:.1f}",
+        f"report only: {'yes' if report.report_only else 'no'}",
+        f"status: {status}",
+        f"run report: {artifact_paths.run_report_path}",
+    ]
+    if artifact_paths.leads_path is None:
+        lines.append("leads artifact: not written (--report-only)")
+    else:
+        lines.append(f"leads artifact: {artifact_paths.leads_path}")
+    if artifact_paths.manual_review_path is None:
+        lines.append("manual review artifact: not written (--report-only)")
+    else:
+        lines.append(f"manual review artifact: {artifact_paths.manual_review_path}")
+
+    if report.collected_count == 0:
+        lines.append("note: no importable leads were collected")
+        if artifact_paths.leads_path is not None:
+            lines.append(
+                "note: leads.import.json contains an empty array; jobs-ai import rejects empty batches, so there is nothing to import from this run"
+            )
+
+    manual_review_results = [
+        result
+        for result in report.source_results
+        if result.outcome == "manual_review"
+    ]
+    if manual_review_results:
+        lines.append("manual review needed:")
+        lines.extend(
+            _format_collect_result_line(result)
+            for result in manual_review_results
+        )
+
+    skipped_results = [
+        result
+        for result in report.source_results
+        if result.outcome == "skipped"
+    ]
+    if skipped_results:
+        lines.append("skipped sources:")
+        lines.extend(
+            _format_collect_result_line(result)
+            for result in skipped_results
+        )
+
+    if artifact_paths.leads_path is not None and report.collected_count:
+        _append_guidance(
+            lines,
+            "next:",
+            (_cli_example(f"import {artifact_paths.leads_path}"),),
+        )
+    return "\n".join(lines)
+
+
+def _format_collect_result_line(result) -> str:
+    line = f"- {result.source.source_url} | {result.reason_code} | {result.reason}"
+    if result.suggested_next_action:
+        line = f"{line} | next: {result.suggested_next_action}"
+    return line
+
+
+def render_collect_error_report(error: str) -> str:
+    return "\n".join(
+        [
+            "jobs_ai collect",
+            "status: failed",
+            f"error: {error}",
+            "",
+            "next:",
+            f"- {_cli_example('collect --from-file sources.txt')}",
+        ]
+    )
+
+
+def render_seed_sources_report(report: SourceSeedRunReport) -> str:
+    artifact_paths = report.artifact_paths
+    assert artifact_paths is not None
+
+    status = "success"
+    if report.confirmed_count == 0 and report.manual_review_count == 0 and report.skipped_count:
+        status = "completed with skips"
+    elif report.manual_review_count or report.skipped_count:
+        status = "success with follow-up"
+
+    lines = [
+        "jobs_ai seed-sources",
+        f"run id: {report.run_id or artifact_paths.output_dir.name}",
+        f"output dir: {artifact_paths.output_dir}",
+        f"created_at: {report.created_at}",
+        f"finished_at: {report.finished_at or report.created_at}",
+        f"input companies: {report.input_company_count}",
+        f"confirmed: {report.confirmed_count}",
+        f"manual review: {report.manual_review_count}",
+        f"skipped: {report.skipped_count}",
+        f"confirmed source URLs: {report.confirmed_source_count}",
+        f"timeout seconds: {report.timeout_seconds:.1f}",
+        f"report only: {'yes' if report.report_only else 'no'}",
+        f"status: {status}",
+        f"seed report: {artifact_paths.seed_report_path}",
+    ]
+    if artifact_paths.confirmed_sources_path is None:
+        lines.append("confirmed sources artifact: not written (--report-only)")
+    else:
+        lines.append(f"confirmed sources artifact: {artifact_paths.confirmed_sources_path}")
+    if artifact_paths.manual_review_sources_path is None:
+        lines.append("manual review artifact: not written (--report-only)")
+    else:
+        lines.append(f"manual review artifact: {artifact_paths.manual_review_sources_path}")
+
+    if report.confirmed_count == 0:
+        lines.append("note: no ATS board roots were auto-confirmed")
+
+    manual_review_results = [
+        result
+        for result in report.company_results
+        if result.outcome == "manual_review"
+    ]
+    if manual_review_results:
+        lines.append("manual review companies:")
+        lines.extend(_format_seed_result_line(result) for result in manual_review_results)
+
+    skipped_results = [
+        result
+        for result in report.company_results
+        if result.outcome == "skipped"
+    ]
+    if skipped_results:
+        lines.append("skipped companies:")
+        lines.extend(_format_seed_result_line(result) for result in skipped_results)
+
+    if artifact_paths.confirmed_sources_path is not None and report.confirmed_source_count:
+        _append_guidance(
+            lines,
+            "next:",
+            (_cli_example(f"collect --from-file {artifact_paths.confirmed_sources_path}"),),
+        )
+    return "\n".join(lines)
+
+
+def _format_seed_result_line(result) -> str:
+    company_label = result.company_input.company or result.company_input.raw_value
+    line = f"- {company_label} | {result.reason_code} | {result.reason}"
+    if result.suggested_next_action:
+        line = f"{line} | next: {result.suggested_next_action}"
+    return line
+
+
+def render_seed_sources_error_report(error: str) -> str:
+    return "\n".join(
+        [
+            "jobs_ai seed-sources",
+            "status: failed",
+            f"error: {error}",
+            "",
+            "next:",
+            f"- {_cli_example('seed-sources --from-file companies.txt')}",
+        ]
+    )
 
 
 def render_score_report(paths: WorkspacePaths, scored_jobs: Sequence[ScoredJob]) -> str:

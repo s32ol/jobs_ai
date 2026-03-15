@@ -1,71 +1,69 @@
 # jobs_ai
 
-`jobs_ai` is a pragmatic local Python tool for a semi-automated job application exoskeleton.
+`jobs_ai` is a local Python CLI for running a human-in-the-loop job application sprint.
 
-The intent is not "auto-apply everywhere." The tool is meant to help a human operator move faster by handling search ingestion, cleanup, scoring, queue building, session launch, and application tracking in small safe steps.
+It is not an "auto-apply" bot. The repo is built to help one operator move a batch of leads from source discovery to ranked queue to controlled browser launch, while keeping the risky parts manual and visible.
 
-## Current status
+## What problem it solves
 
-Milestone 11 operational polish is now in place, while retry queue behavior remains deferred. The repo currently includes:
+Most job-search workflows break down in the same places:
 
-- a Typer-based local CLI control tower
-- environment and path configuration
-- workspace bootstrap helpers for upcoming milestones
-- a local SQLite database backbone in the project data area
-- minimal `jobs` and `applications` tables
-- small database helpers for connect/init/schema checks
-- `db init` and `db status` CLI commands
-- a small JSON file import flow that inserts leads into `jobs`
-- per-record validation for required import fields with clear skip/error reporting
-- a light normalization pass for selected import fields before insert
-- a first deterministic dedupe pass before insert using exact `apply_url` matches or an exact `source + company + title + location` fallback when `apply_url` is missing
-- a lightweight rule-based scoring pass for stored jobs based on title fit, stack signals, geography, and source priority
-- a read-only apply queue view that selects the top ranked `new` jobs as a deterministic working set
-- a read-only recommendation view that suggests resume variants and profile snippets for queued jobs using transparent keyword rules
-- a read-only launch preview that shows queued jobs plus the apply URL and recommendation inputs that would be used in an application session
-- a read-only session export that writes the current launch-preview working set to JSON under `data/exports`
-- a read-only manifest preflight command that validates exported session JSON and shows a compact item preview with warnings for incomplete entries
-- a read-only launch planner that consumes preflighted manifest data, preserves item order, and marks which entries are safe for future launch automation
-- a launch dry-run adapter that consumes launch-plan items only and prints a compact ordered summary of the launch sequence
-- a tiny launch executor adapter that accepts explicit launch steps and routes them through either a no-op executor or a browser-backed executor
-- a browser executor mode that opens launchable URLs through Python `webbrowser` without form fill or application state mutation
-- CLI safety controls that can preview, limit, and confirm browser launches before any tabs open
-- a read-only application assist command that surfaces resume and snippet guidance for launchable items
-- an optional portal support helper layer for Greenhouse, Lever, Ashby, and Workday URL detection, hints, and safe link normalization
-- a manual application tracking layer that records explicit status updates and timestamps through the CLI
-- workflow-oriented CLI output with next-step guidance for common operator flows
-- clearer help text and README examples tuned for repeated sprint use
-- smoke tests for schema initialization and required tables
-- preserved legacy resume materials for later snippet/profile work
+- leads come from multiple places and are messy
+- it is hard to keep a small, ranked working set
+- resume/snippet choices drift across tabs and sessions
+- browser launch gets chaotic without a manifest and a limit
+- manual tracking falls behind what actually happened
 
-Fuzzy matching, semantic matching, record merging, stateful queue advancement, and application mutation are intentionally deferred to later milestones.
+`jobs_ai` addresses that with a local SQLite-backed workflow:
 
-## Search focus
+- optional source seeding and source collection
+- deterministic import, dedupe, scoring, and queueing
+- read-only recommendation, preview, and export steps
+- manifest-based preflight and launch planning
+- controlled launch execution with safety flags
+- explicit manual tracking after real operator actions
 
-Target roles:
+## System at a glance
 
-- Data Engineer
-- Analytics Engineer
-- Telemetry / Observability Engineer
-- Platform Data Engineer
-- BigQuery / GCP-oriented roles
+The repo has five practical layers:
 
-Search/application priority:
+1. Source collection / seeding
+   `seed-sources` helps infer likely ATS board roots from company inputs.
+   `collect` fetches supported ATS pages and writes importer-ready artifacts.
+2. Import / scoring / queue
+   `import` writes leads into `jobs`.
+   `score` ranks them with transparent rules.
+   `queue` shows the current working set of ranked `new` jobs.
+3. Recommend / preview / export
+   `recommend` picks a resume variant and profile snippet.
+   `launch-preview` shows what would be used in a launch session.
+   `export-session` writes that preview set to a JSON manifest.
+4. Preflight / launch-plan / launch-dry-run
+   `preflight` validates the manifest.
+   `launch-plan` marks which manifest entries are launchable.
+   `launch-dry-run` prints the launch sequence and optionally opens URLs.
+5. Application-assist / track / portal-hint
+   `application-assist` shows read-only resume/snippet guidance for launchable items.
+   `track` records manual status updates.
+   `portal-hint` inspects one apply URL for safe normalization and portal notes.
 
-1. staffing agencies / recruiter-driven contract roles
-2. contract platforms
-3. vendor / consulting ecosystems
-4. direct company portals
+## Canonical workflow
 
-Geography priority:
+The full upstream-to-launch path is:
 
-1. Remote
-2. Sacramento / Folsom
-3. San Jose / Bay Area
+```text
+seed-sources -> collect -> import -> score -> queue -> recommend -> launch-preview -> export-session -> preflight -> launch-plan -> launch-dry-run -> track
+```
 
-## Quick start
+If you already have importer-shaped JSON, the shorter path is:
 
-Create a virtual environment and install the package:
+```text
+import -> score -> queue -> recommend -> launch-preview -> export-session -> preflight -> launch-plan -> launch-dry-run -> track
+```
+
+## Quickstart
+
+From the repo root:
 
 ```bash
 python3.12 -m venv .venv
@@ -74,562 +72,326 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-Optional environment file:
+Optional local config file:
 
 ```bash
 cp .env.example .env
 ```
 
-Show the command map and the recommended sprint flow:
+Bootstrap the local workspace and database:
 
 ```bash
+source .venv/bin/activate
+python -m jobs_ai init
+python -m jobs_ai doctor
+python -m jobs_ai db init
+python -m jobs_ai db status
+```
+
+See the command map:
+
+```bash
+source .venv/bin/activate
 python -m jobs_ai --help
 ```
 
-## Recommended sprint flow
+## Recommended operator loop
 
-When you are working through a real batch, keep it small and deterministic:
-
-1. Bootstrap the workspace and database once for the local checkout.
-2. Import a fresh lead batch, then score it.
-3. Work from a limited queue and recommendations set.
-4. Preview and export one manifest for the next launch batch.
-5. Preflight and review the manifest before any browser tabs open.
-6. Use `application-assist` for copy/snippet guidance.
-7. Launch with `launch-dry-run --executor browser_stub --limit <n> --confirm`.
-8. Record progress immediately with `track mark`.
-
-Example sprint loop:
+For a real application sprint, keep the batch small and deterministic:
 
 ```bash
-python -m jobs_ai init
-python -m jobs_ai db init
-python -m jobs_ai import data/raw/sample_job_leads.json
+source .venv/bin/activate
+python -m jobs_ai seed-sources --from-file companies.txt
+python -m jobs_ai collect --from-file data/processed/seed-sources-<timestamp>/confirmed_sources.txt
+python -m jobs_ai import data/processed/collect-<timestamp>/leads.import.json
 python -m jobs_ai score
 python -m jobs_ai queue --limit 10
 python -m jobs_ai recommend --limit 10
 python -m jobs_ai launch-preview --limit 10 --portal-hints
 python -m jobs_ai export-session --limit 10
 python -m jobs_ai preflight data/exports/launch-preview-session-<timestamp>.json
-python -m jobs_ai application-assist data/exports/launch-preview-session-<timestamp>.json
+python -m jobs_ai launch-plan data/exports/launch-preview-session-<timestamp>.json
+python -m jobs_ai application-assist --portal-hints data/exports/launch-preview-session-<timestamp>.json
+python -m jobs_ai launch-dry-run --executor noop data/exports/launch-preview-session-<timestamp>.json
 python -m jobs_ai launch-dry-run --executor browser_stub --limit 5 --confirm data/exports/launch-preview-session-<timestamp>.json
 python -m jobs_ai track mark <job_id> opened
 python -m jobs_ai track mark <job_id> applied
 ```
 
-Practical notes:
+Practical operating rules:
 
-- Keep using `--limit` so one sprint batch maps cleanly to one manifest.
-- Re-run `launch-preview --portal-hints` when a link looks portal-hosted or heavily tracked.
-- Use `portal-hint <apply_url>` before launching a suspicious URL outside the normal batch flow.
-- `queue`, `recommend`, and `launch-preview` only operate on jobs whose current status is `new`.
+- Use `--limit` so one queue batch maps to one preview and one manifest.
+- Run `launch-dry-run --executor noop` before any real browser launch.
+- Use `browser_stub` only when you are ready to open real tabs.
+- Record progress immediately with `track mark` after real operator actions.
+- Re-run `launch-preview` or `export-session` if the underlying DB state changes.
 
-## CLI commands
+## Workflow details
 
-Show the current control tower status:
+### 1. Source collection / seeding
 
-```bash
-python -m jobs_ai
+`seed-sources` is an optional upstream helper. It takes company inputs and tries to confirm reusable ATS board-root URLs for supported portals. Its outputs are:
+
+- `seed_report.json`
+- `confirmed_sources.txt`
+- `manual_review_sources.json`
+
+Use it when you have company names or domains and want likely Greenhouse, Lever, or Ashby board roots without hand-building each URL.
+
+`collect` is the canonical collection step once you have source URLs. It fetches supported ATS pages and writes:
+
+- `run_report.json`
+- `leads.import.json`
+- `manual_review.json`
+
+`collect` is the step that produces importer-ready lead records. `manual_review.json` is for accessible but unsupported or incomplete pages that still need human follow-up.
+
+### 2. Import / scoring / queue
+
+`import` consumes local JSON and inserts rows into `jobs`.
+
+It performs:
+
+- required-field validation
+- light normalization
+- deterministic dedupe
+- raw record retention in `raw_json`
+
+`score` applies a transparent rule-based ranking using title fit, stack signals, geography priority, and source priority.
+
+`queue` shows the top ranked working set, but only for jobs whose current `status` is `new`.
+
+### 3. Recommend / preview / export
+
+`recommend` is read-only. It chooses:
+
+- a resume variant key and label
+- a profile snippet key, label, and text
+
+`launch-preview` is also read-only. It combines ranked jobs with the recommendation layer and shows the apply URL that would be used in a launch session.
+
+`export-session` writes the current launch-preview working set to `data/exports/launch-preview-session-<timestamp>.json`.
+
+This export is the handoff point between live DB-backed selection and manifest-based launch preparation.
+
+### 4. Preflight / launch-plan / launch-dry-run
+
+These commands operate on an exported manifest, not directly on the live DB:
+
+- `preflight` validates the JSON contract and flags incomplete items
+- `launch-plan` preserves manifest order and marks which items are launchable
+- `launch-dry-run` prints the ordered launch summary and runs the selected executor
+
+This separation is intentional. The launch pipeline works best when you preview a small batch, export it, preflight it, and then launch from that frozen manifest rather than from a moving queue.
+
+### 5. Application-assist / track / portal-hint
+
+`application-assist` is a read-only overlay on top of the manifest and launch plan. It shows resume and snippet guidance for launchable items.
+
+`portal-hint` is a spot-check tool for one URL. It helps when you want portal detection, a safer normalized link, or a company-scoped Greenhouse/Ashby link before you open tabs.
+
+`track` is the manual state layer. It records what the operator actually did after opening or submitting an application.
+
+## Launch pipeline
+
+The launch path is:
+
+```text
+live DB -> queue -> recommend -> launch-preview -> export-session -> preflight -> launch-plan -> launch-dry-run
 ```
 
-Initialize local runtime folders:
+Important boundary:
 
-```bash
-python -m jobs_ai init
-```
+- `queue`, `recommend`, and `launch-preview` recompute from the current database state
+- `export-session` writes a snapshot manifest to disk
+- `preflight`, `launch-plan`, `application-assist`, and `launch-dry-run` consume that manifest
 
-Check whether the workspace is ready for the next milestone:
+In practice:
 
-```bash
-python -m jobs_ai doctor
-```
+1. Build a small preview batch from the live DB.
+2. Export it once.
+3. Review the exported manifest.
+4. Launch from that manifest.
+5. Track the results manually right away.
 
-Initialize the SQLite database and schema:
+## Executor modes
 
-```bash
-python -m jobs_ai db init
-```
+`launch-dry-run` supports two executor modes:
 
-Check whether the database schema is ready:
+`noop`
 
-```bash
-python -m jobs_ai db status
-```
+- default mode
+- prints the launch summary only
+- opens nothing
+- safest choice for verification
 
-Record a manual application status update:
+`browser_stub`
 
-```bash
-python -m jobs_ai track mark 42 opened
-```
-
-List current application statuses:
-
-```bash
-python -m jobs_ai track list
-```
-
-Show status history for one job:
-
-```bash
-python -m jobs_ai track status 42
-```
-
-Import local job leads from a JSON file:
-
-```bash
-python -m jobs_ai import data/raw/sample_job_leads.json
-```
-
-Rank stored jobs by fit and urgency:
-
-```bash
-python -m jobs_ai score
-```
-
-Show the current read-only apply queue:
-
-```bash
-python -m jobs_ai queue
-```
-
-Limit the working set size:
-
-```bash
-python -m jobs_ai queue --limit 10
-```
-
-Show read-only resume/profile recommendations for the queued jobs:
-
-```bash
-python -m jobs_ai recommend
-```
-
-Optionally trim the recommendation set after ranking:
-
-```bash
-python -m jobs_ai recommend --limit 10
-```
-
-Preview the queued jobs that would be used in a launch session without opening a browser:
-
-```bash
-python -m jobs_ai launch-preview
-```
-
-Optionally trim the preview set after ranking:
-
-```bash
-python -m jobs_ai launch-preview --limit 10
-```
-
-Show optional portal hints for supported job boards:
-
-```bash
-python -m jobs_ai launch-preview --portal-hints
-```
-
-Export the current launch-preview working set to a JSON manifest:
-
-```bash
-python -m jobs_ai export-session
-```
-
-Optionally trim the exported set after ranking:
-
-```bash
-python -m jobs_ai export-session --limit 10
-```
-
-Preflight an exported session manifest without opening a browser:
-
-```bash
-python -m jobs_ai preflight data/exports/launch-preview-session-20260313T173045000000Z.json
-```
-
-Build a read-only launch plan from an exported manifest:
-
-```bash
-python -m jobs_ai launch-plan data/exports/launch-preview-session-20260313T173045000000Z.json
-```
-
-Print a compact launch summary for an exported manifest:
-
-```bash
-python -m jobs_ai launch-dry-run data/exports/launch-preview-session-20260313T173045000000Z.json
-```
-
-Inspect one apply URL for supported portal hints and safe link normalization:
-
-```bash
-python -m jobs_ai portal-hint "https://boards.greenhouse.io/acme?gh_jid=12345&gh_src=linkedin"
-```
-
-If installed in editable mode, the console script also works:
-
-```bash
-jobs-ai status
-```
-
-```bash
-jobs-ai import data/raw/sample_job_leads.json
-```
-
-```bash
-jobs-ai score
-```
-
-```bash
-jobs-ai queue
-```
-
-```bash
-jobs-ai queue --limit 10
-```
-
-```bash
-jobs-ai recommend
-```
-
-```bash
-jobs-ai recommend --limit 10
-```
-
-```bash
-jobs-ai launch-preview
-```
-
-```bash
-jobs-ai launch-preview --limit 10
-```
-
-```bash
-jobs-ai launch-preview --portal-hints
-```
-
-```bash
-jobs-ai export-session
-```
-
-```bash
-jobs-ai export-session --limit 10
-```
-
-```bash
-jobs-ai preflight data/exports/launch-preview-session-20260313T173045000000Z.json
-```
-
-```bash
-jobs-ai launch-plan data/exports/launch-preview-session-20260313T173045000000Z.json
-```
-
-```bash
-jobs-ai launch-dry-run data/exports/launch-preview-session-20260313T173045000000Z.json
-```
-
-```bash
-jobs-ai application-assist data/exports/launch-preview-session-20260313T173045000000Z.json
-```
-
-```bash
-jobs-ai application-assist --portal-hints data/exports/launch-preview-session-20260313T173045000000Z.json
-```
-
-```bash
-jobs-ai portal-hint "https://boards.greenhouse.io/acme?gh_jid=12345&gh_src=linkedin"
-```
-
-```bash
-jobs-ai track mark 42 opened
-```
-
-```bash
-jobs-ai track list
-```
-
-```bash
-jobs-ai track status 42
-```
-
-## Import format
-
-JSON import is the supported ingestion path for now. The file can contain either:
-
-- one JSON object
-- an array of JSON objects
-
-Each record must include:
-
-- `source`
-- `company`
-- `title`
-- `location`
-
-Optional fields are mapped when present:
-
-- `apply_url`
-- `source_job_id`
-- `portal_type`
-- `salary_text`
-- `posted_at`
-- `found_at`
-
-Before insert, `source`, `source_job_id`, `company`, `title`, `location`, `apply_url`, `portal_type`, and `salary_text` get a small normalization pass. Surrounding whitespace is trimmed, repeated internal whitespace is collapsed for normal text fields, blank strings become `null`, `portal_type` is lowercased, and `apply_url` is only trimmed.
-
-The current dedupe pass is intentionally exact and minimal. If normalized `apply_url` is present, import skips later records with the same exact `apply_url`. If `apply_url` is missing, import falls back to an exact `source + company + title + location` match. Duplicate records are skipped and reported; existing rows are never merged or overwritten.
-
-The original input record is still stored in `raw_json`.
-
-## Scoring
-
-`jobs-ai score` reads the current `jobs` table and assigns a small transparent score to each row. The current score is fully rule-based and combines:
-
-- target role/title match
-- stack signals from stored job text (`Python`, `BigQuery`, `Looker`, `GCP`, `telemetry/observability`)
-- geography preference (`Remote`, then `Sacramento / Folsom`, then `San Jose / Bay Area`)
-- source priority (`staffing agencies / recruiter-driven contract roles`, then `contract platforms`, then `vendor / consulting ecosystems`, then `direct company portals`)
-
-The report shows the total score plus the exact role, stack, geography, and source reasons used for ranking. There is no ML, embedding, stateful queue advancement, or browser automation in this step.
-
-## Apply queue
-
-`jobs-ai queue` is a minimal read-only session view over already stored jobs. It:
-
-- includes only rows where `status = 'new'`
-- reuses the current deterministic scoring rules
-- sorts by score descending using the existing tie-breakers
-- optionally trims the working set after ranking with `--limit`
-- does not change job status or create application records
-
-Each queue row includes rank, company, title, location, source, score, and a short reason summary pulled from the score signals.
+- opens launchable URLs in deterministic order through Python `webbrowser`
+- supports `--limit` as a safety cap
+- supports `--confirm` before tabs open
+- does not fill forms, upload resumes, log in, or submit anything
 
 Example:
 
-```json
-[
-  {
-    "source": "manual",
-    "company": "Acme Data",
-    "title": "Data Engineer",
-    "location": "Remote",
-    "apply_url": "https://example.com/jobs/data-engineer",
-    "source_job_id": "acme-123",
-    "portal_type": "greenhouse",
-    "salary_text": "$140,000 - $170,000",
-    "posted_at": "2026-03-10",
-    "found_at": "2026-03-12T08:15:00Z"
-  }
-]
+```bash
+source .venv/bin/activate
+python -m jobs_ai launch-dry-run --executor browser_stub --limit 5 --confirm data/exports/launch-preview-session-<timestamp>.json
 ```
 
-A runnable sample file lives at `data/raw/sample_job_leads.json`.
+## Manual tracking
 
-## Resume/profile recommendations
+`track` is how runtime status is maintained today.
 
-`jobs-ai recommend` is a minimal read-only recommendation layer on top of the ranked queue. It:
+`track mark` does two things:
 
-- reads the same ranked `new` jobs used by `jobs-ai queue`
-- recommends a resume variant from a small local config catalog
-- recommends a short profile snippet key plus snippet text from the same config-backed catalog
-- uses transparent title/role keywords plus stack signals to separate telemetry/observability, analytics engineering, and data-engineering jobs
-- explains each recommendation with the queue signals that triggered it
-- does not launch a browser, upload files, write application rows, or change job status
+- appends a history row to `application_tracking`
+- updates `jobs.status`
 
-## Launch preview
+Supported statuses are:
 
-`jobs-ai launch-preview` is a minimal read-only preview layer on top of `jobs-ai queue` and `jobs-ai recommend`. It:
+- `new`
+- `opened`
+- `applied`
+- `skipped`
 
-- includes only queued `new` jobs
-- carries forward the ranked score already used by the queue
-- shows the `apply_url` that would be used in a launch session
-- shows the recommended resume variant and profile snippet for each queued job
-- includes the same short explanation text from the recommendation layer
-- optionally adds portal detection, hints, and normalized/company-specific apply links with `--portal-hints`
-- optionally trims the preview set after ranking with `--limit`
-- does not open a browser, upload files, write application rows, or change job status
+Current queue behavior depends on that status field:
 
-## Session export
+- `queue`
+- `recommend`
+- `launch-preview`
 
-`jobs-ai export-session` is a minimal read-only export layer on top of the existing launch-preview flow. It:
+all operate only on jobs whose current status is `new`.
 
-- reads the same ranked preview set used by `jobs-ai launch-preview`
-- writes a JSON manifest to `data/exports/launch-preview-session-<timestamp>.json`
-- includes export metadata with `created_at` and `item_count`
-- includes company, title, location, source, apply URL, score, recommended resume/profile selections, and explanation text for each item
-- optionally trims the exported set after ranking with `--limit`
-- does not launch a browser, upload files, write application rows, or change job status
-
-## Manifest preflight
-
-`jobs-ai preflight <manifest_path>` is a minimal read-only loader for JSON files produced by `jobs-ai export-session`. It:
-
-- loads the manifest JSON from disk without mutating any application state
-- validates the basic top-level contract (`created_at`, `item_count`, and `items`)
-- rejects clearly invalid manifest shapes with a non-zero exit code
-- shows manifest metadata with `created_at` and `item_count`
-- shows a compact per-item preview with company, title, apply URL, recommended resume variant, and recommended profile snippet
-- flags incomplete entries such as missing `apply_url` or missing recommendation fields
-- does not open a browser, upload files, write application rows, or change job status
-
-## Launch planning
-
-`jobs-ai launch-plan <manifest_path>` is a minimal read-only planning layer on top of `load_session_manifest()`. It:
-
-- consumes only the manifest loader output as the planning input
-- preserves manifest item order
-- assigns deterministic launch order numbers only to launchable items
-- summarizes total items, launchable items, and skipped items
-- shows company, title, apply URL, recommended resume variant, and recommended profile snippet for each planned entry
-- clearly skips items with missing `apply_url` or missing recommendation fields
-- does not open a browser, upload files, write application rows, or change job status
-
-## Launch dry run
-
-`jobs-ai launch-dry-run <manifest_path>` is a minimal executor adapter on top of the existing manifest loader and launch plan flow. It:
-
-- loads the manifest through `load_session_manifest()`
-- builds the launch plan through `build_launch_plan()`
-- materializes explicit `LaunchDryRunStep` inputs from launchable `LaunchPlan` items
-- routes those ordered steps through a tiny `LaunchStepExecutor` adapter, defaulting to `NoOpLaunchExecutor`
-- includes a `BrowserLaunchExecutor` mode that opens launchable URLs with Python `webbrowser`
-- supports `--limit` to cap browser launches by deterministic launch order
-- supports `--confirm` to ask for approval after printing a pre-launch summary and before opening tabs
-- prints a compact, ordered per-entry summary with company, title, apply URL, executor mode, and action label
-- prints `URL: <missing>` when a summary entry does not have a usable URL
-- does not autofill forms, upload files, write application rows, or change job status
-
-### Executor Modes
-
-`noop` (default)
-Does nothing; used for safety and dry runs.
-
-`browser_stub`
-Opens each launchable URL in deterministic order through the default browser.
-
-Example browser launch command with safety controls:
+Useful commands:
 
 ```bash
-jobs-ai launch-dry-run --executor browser_stub --limit 5 --confirm data/exports/session.json
+source .venv/bin/activate
+python -m jobs_ai track mark 42 opened
+python -m jobs_ai track mark 42 applied
+python -m jobs_ai track list
+python -m jobs_ai track status 42
 ```
 
-Example output:
+## Intentionally manual
+
+The repo is designed to stop short of full automation. These remain manual on purpose:
+
+- reviewing ambiguous sources and manual-review artifacts
+- logging into portals or creating accounts
+- uploading the actual resume file
+- answering portal-specific form questions
+- tailoring answers or cover-letter text
+- final submission
+- immediate post-action status marking with `track`
+
+## Production-ready vs optional helpers
+
+Production-ready core operator path:
+
+- `db`
+- `import`
+- `score`
+- `queue`
+- `recommend`
+- `launch-preview`
+- `export-session`
+- `preflight`
+- `launch-plan`
+- `launch-dry-run`
+- `track`
+
+Optional upstream helpers:
+
+- `seed-sources`
+- `collect`
+
+Read-only helper overlays:
+
+- `application-assist`
+- `portal-hint`
+- `--portal-hints`
+
+Auxiliary or non-canonical tooling paths:
+
+- `src/jobs_ai/source_seed_fast.py`
+- `scripts/build_ats_seed_list.py`
+- `legacy_resume_materials/`
+
+## Command reference
+
+Setup and readiness:
+
+```bash
+python -m jobs_ai status
+python -m jobs_ai init
+python -m jobs_ai doctor
+python -m jobs_ai db init
+python -m jobs_ai db status
+```
+
+Lead intake:
+
+```bash
+python -m jobs_ai seed-sources --from-file companies.txt
+python -m jobs_ai collect --from-file sources.txt
+python -m jobs_ai import data/raw/sample_job_leads.json
+```
+
+Queue building:
+
+```bash
+python -m jobs_ai score
+python -m jobs_ai queue --limit 10
+python -m jobs_ai recommend --limit 10
+python -m jobs_ai launch-preview --limit 10 --portal-hints
+python -m jobs_ai export-session --limit 10
+```
+
+Manifest and launch:
+
+```bash
+python -m jobs_ai preflight data/exports/launch-preview-session-<timestamp>.json
+python -m jobs_ai launch-plan data/exports/launch-preview-session-<timestamp>.json
+python -m jobs_ai application-assist --portal-hints data/exports/launch-preview-session-<timestamp>.json
+python -m jobs_ai launch-dry-run --executor noop data/exports/launch-preview-session-<timestamp>.json
+python -m jobs_ai launch-dry-run --executor browser_stub --limit 5 --confirm data/exports/launch-preview-session-<timestamp>.json
+python -m jobs_ai portal-hint "https://boards.greenhouse.io/acme?gh_jid=12345&gh_src=linkedin"
+```
+
+Tracking:
+
+```bash
+python -m jobs_ai track mark 42 opened
+python -m jobs_ai track mark 42 applied
+python -m jobs_ai track list
+python -m jobs_ai track status 42
+```
+
+## Repo map
 
 ```text
-[1] Northwind Talent | Senior Data Engineer
-URL: https://agency.example/jobs/2
-Executor: noop
-Action: OPEN_URL
+src/jobs_ai/              main package and CLI
+tests/                    unit and CLI coverage
+scripts/                  auxiliary operational wrappers
+data/raw/                 sample or raw lead inputs
+data/processed/           collection and source-seeding outputs
+data/exports/             exported launch manifests
+legacy_resume_materials/  archived resume/profile materials
 ```
 
-## Application assist
+## Known limitations
 
-`jobs-ai application-assist <manifest_path>` is a read-only operator helper on top of the existing manifest loader and launch plan flow. It:
+- The `applications` table exists in the schema, but current runtime behavior is driven mostly by `jobs.status` plus `application_tracking`.
+- `export-session` recomputes from the live DB-backed preview path, so preview/export drift is possible if the database changes between commands.
+- Resume recommendations currently point to variant keys and labels, not concrete resume file paths.
+- The repo contains parallel or auxiliary tooling paths in addition to the canonical CLI workflow.
 
-- loads the manifest through `load_session_manifest()`
-- builds the launch plan through `build_launch_plan()`
-- shows only launchable entries in deterministic launch order
-- surfaces the recommended resume variant, snippet selection, and snippet text for each launchable item
-- optionally adds portal detection, hints, and normalized/company-specific apply links with `--portal-hints`
-- does not open a browser, autofill forms, submit applications, handle login, or mutate application state
+## Tests
 
-Example output:
-
-```text
-[1] Northwind Talent | Senior Data Engineer
-Resume: data-engineering (Data Engineering Resume)
-Snippet: pipeline-delivery (Pipeline Delivery)
-Text: Python-first pipeline delivery across SQL warehouses, BigQuery/GCP, and production data systems.
-```
-
-## Portal support
-
-Milestone 10 adds a small optional helper layer for common job boards without changing the launch executor contract. The helper currently:
-
-- detects Greenhouse, Lever, Ashby, and Workday URLs
-- removes common tracking-only query params when it is safe to do so
-- extracts a more direct company-scoped apply URL for supported Greenhouse and Ashby link shapes
-- surfaces human-facing hints through `jobs-ai portal-hint`, `jobs-ai launch-preview --portal-hints`, and `jobs-ai application-assist --portal-hints`
-- does not fill forms, handle login, scrape pages, or automate any browser steps beyond the existing launch flow
-
-## Application tracking
-
-`jobs-ai track` is a minimal manual status layer on top of the existing `jobs` table. It:
-
-- records explicit operator-driven status updates only
-- supports the statuses `new`, `opened`, `applied`, and `skipped`
-- appends a timestamped history row for each manual update
-- updates the current `jobs.status` field so queue-style views stay deterministic
-- does not infer status from browser behavior, handle logins, submit forms, or automate any application step
-
-Example mark flow:
+Run the project test suite from the repo venv:
 
 ```bash
-jobs-ai track mark 42 applied
-```
-
-Example list flow:
-
-```bash
-jobs-ai track list
-```
-
-Example per-job history flow:
-
-```bash
-jobs-ai track status 42
-```
-
-## Layout
-
-```text
-src/jobs_ai/              Python package
-tests/                    CLI and workspace smoke tests
-scripts/                  One-off operational helpers
-data/raw/                 Raw lead inputs
-data/processed/           Cleaned or derived outputs
-data/exports/             Read-only JSON session manifests
-legacy_resume_materials/  Archived source files from earlier resume work
-```
-
-## Run tests
-
-```bash
+source .venv/bin/activate
 python -m unittest discover -s tests -v
 ```
-
-## Manual verification flow
-
-Recommended real-world check after code changes:
-
-1. Run `python -m jobs_ai init`, `python -m jobs_ai doctor`, and `python -m jobs_ai db init` in a clean workspace or temp database path.
-2. Import `data/raw/sample_job_leads.json`, then run `score`, `queue --limit 2`, `recommend --limit 2`, and `launch-preview --limit 2 --portal-hints`.
-3. Export a manifest, then run `preflight`, `launch-plan`, and `application-assist` against that exact export path.
-4. Run `launch-dry-run <manifest>` in default `noop` mode first, then run `launch-dry-run --executor browser_stub --limit 1 --confirm <manifest>` only when you are ready to verify one real browser open.
-5. Use `track mark`, `track list`, and `track status` to confirm manual status updates still line up with the queue behavior you expect.
-
-## Milestone Tracker
-
-- [x] Milestone 1: Create the project skeleton
-- [x] Milestone 2: Build the database and job/application tables
-- [x] Milestone 3: Add job ingestion
-- [x] Milestone 4: Normalize and deduplicate jobs
-- [x] Milestone 4A: Normalize imported job leads before deduplication
-- [x] Milestone 4B: Add the first deduplication pass
-- [x] Milestone 5: Rank jobs by fit and urgency
-- [x] Milestone 6: Build the apply queue
-- [x] Milestone 7: Add resume/profile snippet selection
-- [x] Milestone 8A: Add read-only launch preview
-- [x] Milestone 8A.1: Add read-only session export manifest
-- [x] Milestone 8A.2: Add read-only manifest loader and preflight
-- [x] Milestone 8B.0: Add read-only launch planner from manifest
-- [x] Milestone 8B.1: Add read-only browser launch dry run
-- [x] Milestone 8B.2: Add minimal launch executor adapter
-- [x] Milestone 8B.3: Add disabled browser executor stub
-- [x] Milestone 8B.4: Add compact launch dry-run summary formatter
-- [x] Milestone 8B.5: Enable browser-backed launch execution
-- [x] Milestone 8B.6: Add launch safety controls
-- [x] Milestone 8C: Add read-only application assist layer
-- [ ] Milestone 8B: Build browser-backed launch + application assist flow
-- [x] Milestone 9A: Add application tracking
-- [ ] Milestone 9B: Add retry queue
-- [x] Milestone 10: Improve portal-specific support
-- [x] Milestone 11: Operational polish

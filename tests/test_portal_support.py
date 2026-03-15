@@ -23,6 +23,10 @@ class PortalSupportTest(unittest.TestCase):
             "greenhouse",
         )
         self.assertEqual(
+            detect_portal_type("https://job-boards.greenhouse.io/acme/jobs/12345"),
+            "greenhouse",
+        )
+        self.assertEqual(
             detect_portal_type("https://jobs.lever.co/acme/abcdef?lever-source=LinkedIn"),
             "lever",
         )
@@ -38,6 +42,11 @@ class PortalSupportTest(unittest.TestCase):
             ),
             "workday",
         )
+
+    def test_detect_portal_type_stays_narrow_for_non_board_vendor_urls(self) -> None:
+        self.assertIsNone(detect_portal_type("https://www.greenhouse.io/about"))
+        self.assertIsNone(detect_portal_type("https://www.lever.co/careers"))
+        self.assertIsNone(detect_portal_type("https://www.ashbyhq.com/customers"))
 
     def test_build_portal_support_extracts_greenhouse_company_link(self) -> None:
         portal_support = build_portal_support(

@@ -6,6 +6,8 @@ from pathlib import Path
 import click
 import typer
 
+from .collect.cli import run_collect_command
+from .source_seed.cli import run_seed_sources_command
 from .application_assist import build_application_assist
 from .application_tracking import (
     get_application_status,
@@ -30,6 +32,8 @@ from .launch_plan import build_launch_plan
 from .main import (
     render_application_assist_error_report,
     render_application_assist_report,
+    render_collect_error_report,
+    render_collect_report,
     render_application_tracking_error_report,
     render_application_tracking_list_report,
     render_application_tracking_mark_report,
@@ -51,6 +55,8 @@ from .main import (
     render_preflight_report,
     render_queue_report,
     render_recommendation_report,
+    render_seed_sources_error_report,
+    render_seed_sources_report,
     render_score_report,
     render_status_report,
 )
@@ -65,9 +71,10 @@ app = typer.Typer(
     add_completion=False,
     help=(
         "Local CLI for the jobs_ai job-search exoskeleton.\n\n"
-        "Typical sprint flow: init -> db init -> import -> score -> queue -> "
-        "recommend -> launch-preview -> export-session -> preflight -> "
-        "application-assist -> launch-dry-run -> track."
+        "Typical sprint flow: init -> db init -> collect -> inspect summary -> "
+        "import -> score -> queue -> recommend -> launch-preview -> "
+        "export-session -> preflight -> application-assist -> launch-dry-run "
+        "-> track."
     ),
 )
 db_app = typer.Typer(
@@ -146,6 +153,140 @@ def doctor() -> None:
     typer.echo(render_doctor_report(paths, missing_paths))
     if missing_paths:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def collect(
+    sources: list[str] = typer.Argument(
+        None,
+        help=(
+            "One or more source URLs to collect. Supported Greenhouse, Lever, "
+            "and Ashby pages are collected automatically."
+        ),
+    ),
+    from_file: Path | None = typer.Option(
+        None,
+        "--from-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "Optional text file containing one source URL per line. Blank lines "
+            "and lines starting with # are ignored."
+        ),
+    ),
+    out_dir: Path | None = typer.Option(
+        None,
+        "--out-dir",
+        help=(
+            "Optional output directory for run_report.json, leads.import.json, "
+            "and manual_review.json."
+        ),
+    ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        help="Optional short label to include in the default run id and output directory name.",
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-source fetch timeout in seconds.",
+    ),
+    report_only: bool = typer.Option(
+        False,
+        "--report-only",
+        help="Write only run_report.json and skip leads.import.json plus manual_review.json.",
+    ),
+) -> None:
+    """Collect source pages into run_report.json, leads.import.json, and manual_review.json."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        run = run_collect_command(
+            paths,
+            sources=sources or (),
+            from_file=from_file,
+            out_dir=out_dir,
+            label=label,
+            timeout_seconds=timeout,
+            report_only=report_only,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_collect_report(run.report))
+
+
+@app.command("seed-sources")
+def seed_sources(
+    companies: list[str] = typer.Argument(
+        None,
+        help=(
+            "Optional company seed entries. Use plain company names or "
+            "'Company Name | company.com | notes'."
+        ),
+    ),
+    from_file: Path | None = typer.Option(
+        None,
+        "--from-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "Optional text file containing one company seed entry per line. "
+            "Blank lines and lines starting with # are ignored."
+        ),
+    ),
+    out_dir: Path | None = typer.Option(
+        None,
+        "--out-dir",
+        help=(
+            "Optional output directory for seed_report.json, confirmed_sources.txt, "
+            "and manual_review_sources.json."
+        ),
+    ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        help="Optional short label to include in the default run id and output directory name.",
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-candidate fetch timeout in seconds.",
+    ),
+    report_only: bool = typer.Option(
+        False,
+        "--report-only",
+        help="Write only seed_report.json and skip confirmed_sources.txt plus manual_review_sources.json.",
+    ),
+) -> None:
+    """Infer and verify reusable ATS board-root sources from company inputs."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        run = run_seed_sources_command(
+            paths,
+            companies=companies or (),
+            from_file=from_file,
+            out_dir=out_dir,
+            label=label,
+            timeout_seconds=timeout,
+            report_only=report_only,
+        )
+    except ValueError as exc:
+        typer.echo(render_seed_sources_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_seed_sources_report(run.report))
 
 
 @app.command("import")
