@@ -4,8 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
+from collections.abc import Sequence
 
 from .launch_preview import LaunchPreview, select_launch_preview
+from .session_manifest import SessionSelectionScope
+
+_LABEL_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +19,8 @@ class SessionExportResult:
     created_at: str
     item_count: int
     limit: int | None
+    label: str | None
+    selection_scope: SessionSelectionScope | None
 
 
 def export_launch_preview_session(
@@ -22,16 +29,42 @@ def export_launch_preview_session(
     *,
     limit: int | None = None,
     created_at: datetime | None = None,
+    label: str | None = None,
+    selection_scope: SessionSelectionScope | None = None,
 ) -> SessionExportResult:
     previews = select_launch_preview(database_path, limit=limit)
+    return export_launch_previews_session(
+        previews,
+        exports_dir,
+        limit=limit,
+        created_at=created_at,
+        label=label,
+        selection_scope=selection_scope,
+    )
+
+
+def export_launch_previews_session(
+    previews: Sequence[LaunchPreview],
+    exports_dir: Path,
+    *,
+    limit: int | None = None,
+    created_at: datetime | None = None,
+    label: str | None = None,
+    selection_scope: SessionSelectionScope | None = None,
+) -> SessionExportResult:
     created_at_dt = _normalize_created_at(created_at)
     created_at_text = _format_created_at(created_at_dt)
-    export_path = exports_dir / _build_export_filename(created_at_dt)
+    normalized_label = _normalize_label(label)
+    export_path = exports_dir / _build_export_filename(created_at_dt, label=normalized_label)
     payload = {
         "created_at": created_at_text,
         "item_count": len(previews),
         "items": [_record_from_preview(preview) for preview in previews],
     }
+    if normalized_label is not None:
+        payload["label"] = normalized_label
+    if selection_scope is not None:
+        payload["selection_scope"] = _selection_scope_payload(selection_scope)
 
     exports_dir.mkdir(parents=True, exist_ok=True)
     with export_path.open("w", encoding="utf-8") as output_file:
@@ -43,6 +76,8 @@ def export_launch_preview_session(
         created_at=created_at_text,
         item_count=len(previews),
         limit=limit,
+        label=normalized_label,
+        selection_scope=selection_scope,
     )
 
 
@@ -81,5 +116,24 @@ def _format_created_at(created_at: datetime) -> str:
     return created_at.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _build_export_filename(created_at: datetime) -> str:
+def _build_export_filename(created_at: datetime, *, label: str | None = None) -> str:
+    if label is not None:
+        return f"launch-preview-session-{label}-{created_at.strftime('%Y%m%dT%H%M%S%fZ')}.json"
     return f"launch-preview-session-{created_at.strftime('%Y%m%dT%H%M%S%fZ')}.json"
+
+
+def _normalize_label(label: str | None) -> str | None:
+    if label is None:
+        return None
+    normalized_label = _LABEL_RE.sub("-", label.strip()).strip("-.")
+    if not normalized_label:
+        raise ValueError("label must contain at least one letter or number")
+    return normalized_label
+
+
+def _selection_scope_payload(selection_scope: SessionSelectionScope) -> dict[str, str | None]:
+    return {
+        "batch_id": selection_scope.batch_id,
+        "source_query": selection_scope.source_query,
+        "import_source": selection_scope.import_source,
+    }

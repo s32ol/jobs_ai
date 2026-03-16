@@ -98,6 +98,40 @@ class ApplicationTrackingTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid status 'submitted'"):
                 record_application_status(database_path, job_id=job_id, status="submitted")
 
+    def test_record_application_status_supports_pipeline_outcomes_and_blocks_backwards_transitions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Acme Data",
+                        title="Data Engineer",
+                        location="Remote",
+                    ),
+                )
+                connection.commit()
+
+            record_application_status(database_path, job_id=job_id, status="applied")
+            record_application_status(database_path, job_id=job_id, status="recruiter_screen")
+            interview_snapshot = record_application_status(database_path, job_id=job_id, status="interview")
+
+            self.assertEqual(interview_snapshot.current_status, "interview")
+            detail = get_application_status(database_path, job_id=job_id)
+            self.assertEqual(
+                [entry.status for entry in detail.history],
+                ["applied", "recruiter_screen", "interview"],
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "cannot move from interview to opened",
+            ):
+                record_application_status(database_path, job_id=job_id, status="opened")
+
     def test_cli_track_mark_records_status_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
@@ -148,6 +182,31 @@ class ApplicationTrackingTest(unittest.TestCase):
             self.assertIn("jobs_ai track mark", result.stdout)
             self.assertIn("status: failed", result.stdout)
             self.assertIn("invalid status 'submitted'", result.stdout)
+
+    def test_cli_track_mark_supports_new_outcome_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Northwind Talent",
+                        title="Platform Data Engineer",
+                        location="Remote",
+                    ),
+                )
+                connection.commit()
+
+            applied_result = RUNNER.invoke(app, ["track", "mark", str(job_id), "applied"], env=env)
+            interview_result = RUNNER.invoke(app, ["track", "mark", str(job_id), "interview"], env=env)
+
+            self.assertEqual(applied_result.exit_code, 0)
+            self.assertEqual(interview_result.exit_code, 0)
+            self.assertIn("recorded status: interview", interview_result.stdout)
 
     def test_cli_track_list_and_status_display_current_status_and_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

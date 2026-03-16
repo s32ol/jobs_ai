@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 from urllib.parse import urlparse
@@ -19,6 +20,8 @@ SELECT
     location,
     apply_url,
     portal_type,
+    posted_at,
+    found_at,
     raw_json
 FROM jobs
 ORDER BY id
@@ -117,6 +120,8 @@ class ScoredJob:
     location: str | None
     apply_url: str | None
     portal_type: str | None
+    posted_at: str | None
+    found_at: str | None
     total_score: int
     role_score: int
     role_reason: str
@@ -130,6 +135,8 @@ class ScoredJob:
     source_score: int
     source_reason: str
     source_category: str
+    actionability_score: int
+    actionability_reason: str
 
 
 def score_jobs_from_database(database_path: Path) -> tuple[ScoredJob, ...]:
@@ -149,6 +156,7 @@ def rank_jobs(job_records: Sequence[Mapping[str, object]]) -> tuple[ScoredJob, .
                 -job.stack_score,
                 -job.geography_score,
                 -job.source_score,
+                -_freshness_sort_key(job),
                 job.job_id,
             ),
         )
@@ -162,12 +170,15 @@ def score_job(job_record: Mapping[str, object]) -> ScoredJob:
     location = _text_value(_field_value(job_record, "location"))
     apply_url = _text_value(_field_value(job_record, "apply_url"))
     portal_type = _text_value(_field_value(job_record, "portal_type"))
+    posted_at = _text_value(_field_value(job_record, "posted_at"))
+    found_at = _text_value(_field_value(job_record, "found_at"))
     raw_json = _text_value(_field_value(job_record, "raw_json")) or ""
 
     role_score, matched_target_role, role_reason = _score_role(title)
     stack_score, matched_stack_keywords, stack_reason = _score_stack(title, company, raw_json)
     geography_score, geography_bucket, geography_reason = _score_geography(location)
     source_score, source_category, source_reason = _score_source(source, portal_type, apply_url)
+    actionability_score, actionability_reason = _score_actionability(apply_url)
 
     return ScoredJob(
         job_id=_int_value(_field_value(job_record, "id")),
@@ -177,7 +188,9 @@ def score_job(job_record: Mapping[str, object]) -> ScoredJob:
         location=location,
         apply_url=apply_url,
         portal_type=portal_type,
-        total_score=role_score + stack_score + geography_score + source_score,
+        posted_at=posted_at,
+        found_at=found_at,
+        total_score=role_score + stack_score + geography_score + source_score + actionability_score,
         role_score=role_score,
         role_reason=role_reason,
         matched_target_role=matched_target_role,
@@ -190,6 +203,8 @@ def score_job(job_record: Mapping[str, object]) -> ScoredJob:
         source_score=source_score,
         source_reason=source_reason,
         source_category=source_category,
+        actionability_score=actionability_score,
+        actionability_reason=actionability_reason,
     )
 
 
@@ -220,6 +235,12 @@ def _score_geography(location: str | None) -> tuple[int, str | None, str]:
         return 0, None, "location missing"
     if re.search(r"\bremote\b", searchable_text):
         return 18, GEOGRAPHY_PRIORITY[0], f'location matched geography priority "{GEOGRAPHY_PRIORITY[0]}"'
+    if re.search(r"\bhybrid\b", searchable_text):
+        if re.search(r"\b(sacramento|folsom)\b", searchable_text):
+            return 9, GEOGRAPHY_PRIORITY[1], f'hybrid location matched geography priority "{GEOGRAPHY_PRIORITY[1]}"'
+        if re.search(r"\b(san jose|bay area)\b", searchable_text):
+            return 5, GEOGRAPHY_PRIORITY[2], f'hybrid location matched geography priority "{GEOGRAPHY_PRIORITY[2]}"'
+        return 3, "Hybrid", 'location matched fallback geography priority "Hybrid"'
     if re.search(r"\b(sacramento|folsom)\b", searchable_text):
         return 12, GEOGRAPHY_PRIORITY[1], f'location matched geography priority "{GEOGRAPHY_PRIORITY[1]}"'
     if re.search(r"\b(san jose|bay area)\b", searchable_text):
@@ -263,6 +284,44 @@ def _score_source(
         )
 
     return 0, "unclassified", "no source priority rule matched"
+
+
+def _score_actionability(apply_url: str | None) -> tuple[int, str]:
+    if apply_url:
+        return 0, "apply_url present"
+    return -8, "apply_url missing; deprioritized because the listing is not launchable yet"
+
+
+def _freshness_sort_key(job: ScoredJob) -> int:
+    return _timestamp_sort_value(job.posted_at) or _timestamp_sort_value(job.found_at)
+
+
+def _timestamp_sort_value(value: str | None) -> int:
+    normalized_value = _normalize_timestamp_text(value)
+    if normalized_value is None:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(normalized_value.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return int(parsed.timestamp())
+
+
+def _normalize_timestamp_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized_value = value.strip()
+    if not normalized_value:
+        return None
+    if len(normalized_value) == 10 and normalized_value.count("-") == 2:
+        return f"{normalized_value}T00:00:00+00:00"
+    if " " in normalized_value and "T" not in normalized_value:
+        return normalized_value.replace(" ", "T", 1)
+    return normalized_value
 
 
 def _apply_url_host(apply_url: str | None) -> str:

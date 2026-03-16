@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .session_manifest import ManifestSelection, SessionManifest
+from .session_manifest import ManifestSelection, SessionManifest, SessionSelectionScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +23,8 @@ class LaunchPlanItem:
 class LaunchPlan:
     manifest_path: Path
     created_at: str
+    label: str | None
+    selection_scope: SessionSelectionScope | None
     total_items: int
     launchable_items: int
     skipped_items: int
@@ -57,6 +59,8 @@ def build_launch_plan(manifest: SessionManifest) -> LaunchPlan:
     return LaunchPlan(
         manifest_path=manifest.manifest_path,
         created_at=manifest.created_at,
+        label=manifest.label,
+        selection_scope=manifest.selection_scope,
         total_items=len(planned_items),
         launchable_items=launch_order,
         skipped_items=len(planned_items) - launch_order,

@@ -42,8 +42,13 @@ def select_queue_recommendations(
     database_path: Path,
     *,
     limit: int | None = None,
+    ingest_batch_id: str | None = None,
 ) -> tuple[QueueRecommendation, ...]:
-    queued_jobs = select_ranked_apply_queue(database_path, limit=limit)
+    queued_jobs = select_ranked_apply_queue(
+        database_path,
+        limit=limit,
+        ingest_batch_id=ingest_batch_id,
+    )
     return tuple(recommend_queued_job(job) for job in queued_jobs)
 
 

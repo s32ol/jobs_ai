@@ -2,15 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+import json
 
 from .collect.models import CollectRunReport
+from .discover.models import DiscoverRunReport
 from .source_seed.models import SourceSeedRunReport
-from .application_tracking import ApplicationStatusDetail, ApplicationStatusSnapshot
+from .application_tracking import (
+    APPLICATION_STATUSES,
+    ApplicationStatusDetail,
+    ApplicationStatusSnapshot,
+)
 from .application_assist import ApplicationAssist
 from .config import GEOGRAPHY_PRIORITY, SEARCH_PRIORITY, TARGET_ROLES, Settings
-from .db import REQUIRED_TABLES
+from .db import REQUIRED_TABLES, SessionHistoryEntry
 from .launch_dry_run import LaunchDryRunStep
 from .launch_executor import LaunchExecutionReport
+from .maintenance import BackfillResult
 from .jobs.importer import JobImportResult
 from .launch_plan import LaunchPlan
 from .jobs.queue import QueuedJob
@@ -18,8 +25,13 @@ from .launch_preview import LaunchPreview
 from .jobs.scoring import ScoredJob
 from .portal_support import SUPPORTED_PORTAL_TYPES, PortalSupport, build_portal_support
 from .resume.recommendations import QueueRecommendation
+from .run_workflow import RunWorkflowResult
 from .session_export import SessionExportResult
-from .session_manifest import ManifestSelection, SessionManifest
+from .session_history import SessionInspection, SessionReopenResult
+from .session_mark import SessionMarkResult
+from .session_manifest import ManifestSelection, SessionManifest, SessionSelectionScope
+from .session_start import SessionStartResult
+from .stats import OperatorStats
 from .workspace import WorkspacePaths
 
 CLI_EXAMPLE_PREFIX = "python -m jobs_ai"
@@ -80,7 +92,7 @@ def render_status_report(settings: Settings, paths: WorkspacePaths) -> str:
             "",
             *_render_bullets("geography priority:", GEOGRAPHY_PRIORITY),
             "",
-            f"tip: run {_cli_example('--help')} for the recommended sprint workflow.",
+            'tip: preferred daily entrypoint is jobs-ai run "python backend engineer remote".',
         ]
     )
 
@@ -164,6 +176,60 @@ def render_db_status_report(paths: WorkspacePaths, missing_tables: Sequence[str]
     return "\n".join(lines)
 
 
+def render_maintenance_backfill_report(
+    paths: WorkspacePaths,
+    result: BackfillResult,
+) -> str:
+    action_label = "would update" if result.dry_run else "updated"
+    lines = [
+        "jobs_ai maintenance backfill",
+        f"database path: {paths.database_path}",
+        f"dry run: {'yes' if result.dry_run else 'no'}",
+        f"limit: {result.limit if result.limit is not None else 'none'}",
+        f"jobs inspected: {result.total_jobs}",
+        f"candidate jobs: {result.candidate_jobs}",
+        f"{action_label} jobs: {result.updated_jobs}",
+        f"skipped jobs: {result.skipped_jobs}",
+        f"deferred by limit: {result.deferred_jobs}",
+        f"status: {'success' if result.candidate_jobs or result.missing_tables or result.missing_job_columns else 'no backfill needed'}",
+    ]
+    if result.missing_tables:
+        lines.append("missing tables before run:")
+        lines.extend(f"- {table_name}" for table_name in result.missing_tables)
+    if result.missing_job_columns:
+        lines.append("missing job columns before run:")
+        lines.extend(f"- {column_name}" for column_name in result.missing_job_columns)
+    if result.field_counts:
+        lines.append("field updates:")
+        lines.extend(f"- {entry.field_name}: {entry.count}" for entry in result.field_counts)
+    if result.job_updates:
+        lines.append("job updates:")
+        lines.extend(
+            f"- [job {entry.job_id}] {entry.company} | {entry.title} | {', '.join(entry.changed_fields)}"
+            for entry in result.job_updates
+        )
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("stats"),
+            _cli_example("session recent"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_maintenance_backfill_error_report(paths: WorkspacePaths, error: str) -> str:
+    return "\n".join(
+        [
+            "jobs_ai maintenance backfill",
+            f"database path: {paths.database_path}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
 def render_import_report(
     paths: WorkspacePaths,
     input_path: Path,
@@ -173,9 +239,14 @@ def render_import_report(
         "jobs_ai import",
         f"database path: {paths.database_path}",
         f"input file: {input_path}",
+        f"batch id: {result.batch_id or 'none'}",
         f"inserted: {result.inserted_count}",
+        f"duplicates skipped: {result.duplicate_count}",
+        f"invalid records: {result.error_count}",
         f"skipped: {result.skipped_count}",
     ]
+    if result.source_query is not None:
+        lines.append(f"source query: {result.source_query}")
     if result.skipped:
         lines.append("skipped records:")
         lines.extend(f"- {message}" for message in result.skipped)
@@ -185,7 +256,11 @@ def render_import_report(
         lines.extend(f"- {error}" for error in result.errors)
         if result.inserted_count:
             lines.append("note: valid records were still committed")
-            _append_guidance(lines, "next:", (_cli_example("score"),))
+            _append_guidance(
+                lines,
+                "next:",
+                _import_next_commands(result),
+            )
         else:
             _append_guidance(
                 lines,
@@ -195,7 +270,11 @@ def render_import_report(
     else:
         lines.append("status: success")
         if result.inserted_count:
-            _append_guidance(lines, "next:", (_cli_example("score"),))
+            _append_guidance(
+                lines,
+                "next:",
+                _import_next_commands(result),
+            )
         elif result.skipped:
             lines.append("note: database contents were unchanged")
             _append_guidance(
@@ -386,6 +465,184 @@ def render_seed_sources_error_report(error: str) -> str:
     )
 
 
+def render_discover_report(report: DiscoverRunReport) -> str:
+    artifact_paths = report.artifact_paths
+    assert artifact_paths is not None
+
+    status = "success"
+    if report.confirmed_count == 0 and report.manual_review_count == 0 and report.skipped_count:
+        status = "completed with skips"
+    elif report.manual_review_count or report.skipped_count:
+        status = "success with follow-up"
+
+    lines = [
+        "jobs_ai discover",
+        f"run id: {report.run_id or artifact_paths.output_dir.name}",
+        f"output dir: {artifact_paths.output_dir}",
+        f"created_at: {report.created_at}",
+        f"finished_at: {report.finished_at or report.created_at}",
+        f"query: {report.query}",
+        f"search queries: {len(report.search_results)}",
+        f"raw hits: {report.raw_hit_count}",
+        f"candidate sources found: {report.candidate_source_count}",
+        f"candidate sources verified: {report.verified_candidate_count}",
+        f"confirmed: {report.confirmed_count}",
+        f"manual review: {report.manual_review_count}",
+        f"skipped: {report.skipped_count}",
+        f"timeout seconds: {report.timeout_seconds:.1f}",
+        f"report only: {'yes' if report.report_only else 'no'}",
+        f"collect requested: {'yes' if report.collect_requested else 'no'}",
+        f"import requested: {'yes' if report.import_requested else 'no'}",
+        f"status: {status}",
+        f"discover report: {artifact_paths.discover_report_path}",
+    ]
+    if artifact_paths.confirmed_sources_path is None:
+        lines.append("confirmed sources artifact: not written (--report-only)")
+    else:
+        lines.append(f"confirmed sources artifact: {artifact_paths.confirmed_sources_path}")
+    if artifact_paths.manual_review_sources_path is None:
+        lines.append("manual review artifact: not written (--report-only)")
+    else:
+        lines.append(f"manual review artifact: {artifact_paths.manual_review_sources_path}")
+    lines.extend(_render_discovery_summary_lines(report))
+
+    search_errors = [result for result in report.search_results if result.error]
+    if search_errors:
+        lines.append("search query issues:")
+        lines.extend(
+            f"- {result.plan.site_filter} | {result.error}"
+            for result in search_errors
+        )
+
+    manual_review_results = [
+        result
+        for result in report.candidate_results
+        if result.outcome == "manual_review"
+    ]
+    if manual_review_results:
+        lines.append("manual review sources:")
+        lines.extend(_format_discover_result_line(result) for result in manual_review_results)
+
+    skipped_results = [
+        result
+        for result in report.candidate_results
+        if result.outcome == "skipped"
+    ]
+    if skipped_results:
+        lines.append("skipped candidates:")
+        lines.extend(_format_discover_result_line(result) for result in skipped_results)
+
+    collect_summary = report.collect_summary
+    if collect_summary is not None and collect_summary.requested:
+        lines.append(
+            f"collect step: {collect_summary.status} | collected {collect_summary.collected_count} | manual review {collect_summary.manual_review_count}"
+        )
+        if collect_summary.run_report_path is not None:
+            lines.append(f"collect run report: {collect_summary.run_report_path}")
+        if collect_summary.leads_path is not None:
+            lines.append(f"collect leads artifact: {collect_summary.leads_path}")
+
+    import_summary = report.import_summary
+    if import_summary is not None and import_summary.requested:
+        lines.append(
+            f"import step: {import_summary.status} | inserted {import_summary.inserted_count} | skipped {import_summary.skipped_count}"
+        )
+        if import_summary.input_path is not None:
+            lines.append(f"import input: {import_summary.input_path}")
+        if import_summary.batch_id is not None:
+            lines.append(f"import batch id: {import_summary.batch_id}")
+        if import_summary.source_query is not None:
+            lines.append(f"import source query: {import_summary.source_query}")
+        if import_summary.errors:
+            lines.append("import errors:")
+            lines.extend(f"- {error}" for error in import_summary.errors)
+
+    if report.confirmed_count == 0:
+        lines.append("note: no ATS sources were auto-confirmed from this query")
+
+    next_steps: list[str] = []
+    if (
+        not report.collect_requested
+        and artifact_paths.confirmed_sources_path is not None
+        and report.confirmed_count
+    ):
+        next_steps.append(_cli_example(f"collect --from-file {artifact_paths.confirmed_sources_path}"))
+    if collect_summary is not None and collect_summary.leads_path is not None and not report.import_requested:
+        next_steps.append(_cli_example(f"import {collect_summary.leads_path}"))
+    if import_summary is not None and import_summary.executed and not import_summary.errors:
+        next_steps.extend(_import_summary_next_commands(import_summary))
+        next_steps.append(_command_with_optional_limit("queue", 25))
+    _append_guidance(lines, "next:", tuple(dict.fromkeys(next_steps)))
+    return "\n".join(lines)
+
+
+def _format_discover_result_line(result) -> str:
+    candidate_url = _discover_result_url(result)
+    if result.outcome == "manual_review" and result.candidate.portal_type == "workday":
+        line = f"- manual review (Workday portal) | {candidate_url} | {result.reason_code} | {result.reason}"
+    else:
+        line = f"- {candidate_url} | {result.reason_code} | {result.reason}"
+    if result.suggested_next_action:
+        line = f"{line} | next: {result.suggested_next_action}"
+    return line
+
+
+def _render_discovery_summary_lines(report: DiscoverRunReport) -> list[str]:
+    confirmed_counts = {
+        "greenhouse": 0,
+        "lever": 0,
+        "ashby": 0,
+    }
+    workday_manual_review_count = 0
+
+    for result in report.candidate_results:
+        portal_type = result.candidate.portal_type
+        if result.outcome == "confirmed" and portal_type in confirmed_counts:
+            confirmed_counts[portal_type] += 1
+        if result.outcome == "manual_review" and portal_type == "workday":
+            workday_manual_review_count += 1
+
+    return [
+        "discovery summary:",
+        f"- greenhouse sources: {confirmed_counts['greenhouse']}",
+        f"- lever sources: {confirmed_counts['lever']}",
+        f"- ashby sources: {confirmed_counts['ashby']}",
+        f"- workday sources (manual review): {workday_manual_review_count}",
+    ]
+
+
+def _discover_result_url(result) -> str:
+    candidate = result.candidate
+    if candidate.source_url is not None:
+        return candidate.source_url
+    if candidate.normalized_url is not None:
+        return candidate.normalized_url
+    if candidate.supporting_results:
+        return candidate.supporting_results[0].target_url
+    return "<unknown>"
+
+
+def _discover_workday_manual_review_count(report: DiscoverRunReport) -> int:
+    return sum(
+        1
+        for result in report.candidate_results
+        if result.outcome == "manual_review" and result.candidate.portal_type == "workday"
+    )
+
+
+def render_discover_error_report(error: str) -> str:
+    return "\n".join(
+        [
+            "jobs_ai discover",
+            "status: failed",
+            f"error: {error}",
+            "",
+            "next:",
+            f"- {_cli_example('discover \"python backend engineer remote\"')}",
+        ]
+    )
+
+
 def render_score_report(paths: WorkspacePaths, scored_jobs: Sequence[ScoredJob]) -> str:
     lines = [
         "jobs_ai score",
@@ -409,12 +666,70 @@ def render_score_report(paths: WorkspacePaths, scored_jobs: Sequence[ScoredJob])
                 f"   stack: {job.stack_reason} (+{job.stack_score})",
                 f"   geography: {job.geography_reason} (+{job.geography_score})",
                 f"   source: {job.source_reason} (+{job.source_score})",
+                f"   actionability: {job.actionability_reason} ({job.actionability_score:+d})",
             ]
         )
         if job.apply_url:
             lines.append(f"   apply_url: {job.apply_url}")
     _append_guidance(lines, "next:", (_cli_example("queue"),))
     return "\n".join(lines)
+
+
+def render_stats_report(paths: WorkspacePaths, stats: OperatorStats) -> str:
+    lines = [
+        "jobs_ai stats",
+        f"database path: {paths.database_path}",
+        f"days: {stats.days}",
+        f"total jobs: {stats.total_jobs}",
+        *(
+            f"{status}: {stats.status_count(status)}"
+            for status in APPLICATION_STATUSES
+        ),
+        f"recent imports ({stats.days}d): {stats.recent_imported_jobs}",
+        f"recent import batches ({stats.days}d): {stats.recent_import_batches}",
+        f"total sessions started: {stats.total_sessions_started}",
+        f"recent sessions started ({stats.days}d): {stats.recent_sessions_started}",
+        f"total tracking events: {stats.total_tracking_events}",
+        f"recent tracking events ({stats.days}d): {stats.recent_tracking_events}",
+    ]
+    if stats.portal_counts:
+        lines.append("portal counts:")
+        lines.extend(f"- {entry.label}: {entry.count}" for entry in stats.portal_counts)
+    if stats.top_companies:
+        lines.append("top companies:")
+        lines.extend(f"- {entry.label}: {entry.count}" for entry in stats.top_companies)
+    lines.append("status: success")
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example('run "python backend engineer remote" --limit 25 --open'),
+            _cli_example("track list --status applied"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_stats_json(paths: WorkspacePaths, stats: OperatorStats) -> str:
+    payload = {
+        "command": "jobs_ai stats",
+        "database_path": str(paths.database_path),
+        "days": stats.days,
+        "total_jobs": stats.total_jobs,
+        "status_counts": {entry.label: entry.count for entry in stats.status_counts},
+        "recent_imported_jobs": stats.recent_imported_jobs,
+        "recent_import_batches": stats.recent_import_batches,
+        "total_sessions_started": stats.total_sessions_started,
+        "recent_sessions_started": stats.recent_sessions_started,
+        "total_tracking_events": stats.total_tracking_events,
+        "recent_tracking_events": stats.recent_tracking_events,
+        "portal_counts": {entry.label: entry.count for entry in stats.portal_counts},
+        "top_companies": [
+            {"company": entry.label, "count": entry.count}
+            for entry in stats.top_companies
+        ],
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=True)
 
 
 def render_queue_report(
@@ -557,6 +872,411 @@ def render_export_session_report(
     return "\n".join(lines)
 
 
+def render_session_start_report(
+    paths: WorkspacePaths,
+    result: SessionStartResult,
+    *,
+    show_portal_hints: bool = False,
+) -> str:
+    lines = [
+        "jobs_ai session start",
+        f"database path: {paths.database_path}",
+        f"manifest path: {result.export_result.export_path}",
+        f"created_at: {result.export_result.created_at}",
+        f"selected jobs: {result.selected_count}",
+        f"launchable jobs: {result.plan.launchable_items}",
+        f"skipped jobs: {result.plan.skipped_items}",
+        f"resume recommendations: {result.resume_recommendation_count}",
+        f"resume files resolved: {result.resolved_resume_count}",
+        f"portal hints: {result.portal_hint_count}",
+        f"limit: {result.limit}",
+        f"status: {'no new jobs in queue' if not result.items else 'success'}",
+    ]
+    if result.export_result.label is not None:
+        lines.insert(4, f"label: {result.export_result.label}")
+    if result.selection_scope is not None:
+        lines.insert(4, f"selection scope: {_describe_selection_scope(result.selection_scope)}")
+        if result.selection_scope.source_query is not None:
+            lines.insert(5, f"source query: {result.selection_scope.source_query}")
+
+    if result.open_requested:
+        assert result.executor_mode is not None
+        lines.append(f"open executor: {result.executor_mode}")
+        lines.append(f"open actions: {len(result.execution_reports)}")
+        if result.execution_reports:
+            lines.append(
+                f"opened in browser: {_count_launch_execution_status(result.execution_reports, 'opened')}"
+            )
+            lines.append(
+                f"dry run only: {_count_launch_execution_status(result.execution_reports, 'noop')}"
+            )
+            lines.append(
+                "skipped missing url: "
+                f"{_count_launch_execution_status(result.execution_reports, 'skipped_missing_url')}"
+            )
+
+    if not result.items:
+        _append_guidance(
+            lines,
+            "next:",
+            (
+                _cli_example("discover \"python backend engineer remote\" --collect --import"),
+                _cli_example("track list"),
+            ),
+        )
+        return "\n".join(lines)
+
+    for item in result.items:
+        preview = item.preview
+        location = preview.location or "location missing"
+        lines.extend(
+            [
+                "",
+                (
+                    f"{preview.rank}. [job {preview.job_id}] score {preview.score} | "
+                    f"{preview.company} | {preview.title} | {location}"
+                ),
+                f"   apply_url: {preview.apply_url or 'apply_url missing'}",
+                (
+                    "   resume: "
+                    f"{preview.resume_variant_key} ({preview.resume_variant_label})"
+                ),
+                f"   resume focus: {item.resume_variant_summary}",
+                _format_resume_file_line(
+                    item.resolved_resume_path,
+                    item.resume_fallback_reason,
+                ),
+                (
+                    "   profile snippet: "
+                    f"{preview.snippet_key} ({preview.snippet_label})"
+                ),
+                f"   explanation: {preview.explanation}",
+            ]
+        )
+        if show_portal_hints:
+            lines.extend(_render_portal_support_lines(item.portal_support))
+
+    _append_guidance(
+        lines,
+        "next:",
+        _session_start_next_commands(
+            manifest_path=result.export_result.export_path,
+            opened_in_browser=_reports_include_opened(result.execution_reports),
+            show_portal_hints=show_portal_hints,
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_session_start_error_report(paths: WorkspacePaths, error: str) -> str:
+    lines = [
+        "jobs_ai session start",
+        f"database path: {paths.database_path}",
+        "status: failed",
+        f"error: {error}",
+    ]
+    _append_guidance(lines, "next:", (_cli_example("queue"), _cli_example("launch-preview")))
+    return "\n".join(lines)
+
+
+def render_session_recent_report(
+    paths: WorkspacePaths,
+    sessions: Sequence[SessionHistoryEntry],
+    *,
+    limit: int,
+) -> str:
+    lines = [
+        "jobs_ai session recent",
+        f"database path: {paths.database_path}",
+        f"sessions listed: {len(sessions)}",
+        f"limit: {limit}",
+    ]
+    if not sessions:
+        lines.append("status: no recorded sessions")
+        _append_guidance(lines, "next:", (_cli_example("session start --limit 25"),))
+        return "\n".join(lines)
+
+    lines.append("status: success")
+    for index, entry in enumerate(sessions, start=1):
+        lines.extend(
+            [
+                "",
+                (
+                    f"{index}. [session {entry.session_id}] {entry.created_at} | "
+                    f"selected {entry.item_count} | launchable {entry.launchable_count}"
+                ),
+                f"   batch id: {entry.batch_id or 'none'}",
+                f"   query: {entry.source_query or 'unknown'}",
+                f"   manifest path: {entry.manifest_path}",
+            ]
+        )
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example(f"session inspect {sessions[0].session_id}"),
+            _cli_example(f"session reopen {sessions[0].session_id}"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_session_inspect_report(
+    paths: WorkspacePaths,
+    inspection: SessionInspection,
+) -> str:
+    manifest = inspection.resolved.manifest
+    lines = [
+        "jobs_ai session inspect",
+        f"database path: {paths.database_path}",
+        f"manifest path: {inspection.resolved.manifest_path}",
+        f"created_at: {manifest.created_at}",
+        f"items: {manifest.item_count}",
+        f"launchable items: {inspection.plan.launchable_items}",
+        f"skipped items: {inspection.plan.skipped_items}",
+        f"status: {'success with skipped items' if inspection.plan.skipped_items else 'success'}",
+    ]
+    if inspection.resolved.session_history_entry is not None:
+        lines.insert(2, f"session id: {inspection.resolved.session_history_entry.session_id}")
+    if manifest.label is not None:
+        lines.insert(4, f"label: {manifest.label}")
+    if manifest.selection_scope is not None:
+        lines.insert(4, f"selection scope: {_describe_selection_scope(manifest.selection_scope)}")
+        if manifest.selection_scope.source_query is not None:
+            lines.insert(5, f"source query: {manifest.selection_scope.source_query}")
+    if inspection.status_counts:
+        lines.append("current tracked statuses:")
+        lines.extend(
+            f"- {entry.label}: {entry.count}"
+            for entry in inspection.status_counts
+        )
+    for item in inspection.items:
+        job_label = f"[job {item.job_id}]" if item.job_id is not None else "[job missing]"
+        lines.extend(
+            [
+                "",
+                f"{item.index}. {job_label} {item.company or 'company missing'} | {item.title or 'title missing'}",
+                f"   manifest status: {'launchable' if item.launchable else 'skipped'}",
+                f"   current tracking status: {item.current_status or 'unknown'}",
+            ]
+        )
+        if item.warnings:
+            lines.append(f"   warnings: {'; '.join(item.warnings)}")
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example(f"session reopen {inspection.resolved.reference_text}"),
+            _cli_example(f"preflight {inspection.resolved.manifest_path}"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_session_inspect_error_report(paths: WorkspacePaths, error: str) -> str:
+    return "\n".join(
+        [
+            "jobs_ai session inspect",
+            f"database path: {paths.database_path}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
+def render_session_reopen_report(
+    paths: WorkspacePaths,
+    result: SessionReopenResult,
+) -> str:
+    lines = [
+        "jobs_ai session reopen",
+        f"database path: {paths.database_path}",
+        f"manifest path: {result.resolved.manifest_path}",
+        f"executor mode: {result.executor_mode}",
+        f"launchable items: {result.plan.launchable_items}",
+        f"reopen actions: {len(result.execution_reports)}",
+        f"opened in browser: {_count_launch_execution_status(result.execution_reports, 'opened')}",
+        f"dry run only: {_count_launch_execution_status(result.execution_reports, 'noop')}",
+        f"skipped missing url: {_count_launch_execution_status(result.execution_reports, 'skipped_missing_url')}",
+        f"status: {'no launchable items to reopen' if not result.execution_reports else 'success'}",
+    ]
+    if result.resolved.session_history_entry is not None:
+        lines.insert(2, f"session id: {result.resolved.session_history_entry.session_id}")
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example(f"session inspect {result.resolved.reference_text}"),
+            _cli_example(f"session mark opened --manifest {result.resolved.manifest_path} --all"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_session_reopen_error_report(paths: WorkspacePaths, error: str) -> str:
+    return "\n".join(
+        [
+            "jobs_ai session reopen",
+            f"database path: {paths.database_path}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
+def render_run_report(
+    paths: WorkspacePaths,
+    result: RunWorkflowResult,
+    *,
+    show_portal_hints: bool = False,
+) -> str:
+    collect_suffix = ""
+    if result.collect_limit is not None and result.confirmed_source_count > result.collect_limit:
+        collect_suffix = f" of {result.confirmed_source_count} confirmed"
+
+    lines = [
+        "jobs_ai run",
+        f"database path: {paths.database_path}",
+        f"query: {result.query}",
+        f"workflow dir: {result.output_dir}",
+        f"confirmed sources: {result.confirmed_source_count}",
+        f"workday sources (manual review): {_discover_workday_manual_review_count(result.discover_run.report)}",
+        f"collected sources: {len(result.collected_sources)}{collect_suffix}",
+        f"imported jobs: {result.imported_jobs_count}",
+        f"import batch id: {result.import_result.batch_id if result.import_result is not None else (result.discover_run.report.run_id or result.output_dir.name)}",
+        f"manifest path: {result.manifest_path}",
+        f"selected jobs: {result.session_result.selected_count}",
+        f"launchable jobs: {result.session_result.plan.launchable_items}",
+        f"recommendations: {result.recommendation_count}",
+        f"resume files resolved: {result.session_result.resolved_resume_count}",
+        f"portal hints: {result.portal_hint_count}",
+        f"session limit: {result.session_limit}",
+        f"status: {'no new jobs in queue' if not result.session_result.items else 'success'}",
+    ]
+    if result.label is not None:
+        lines.insert(4, f"label: {result.label}")
+    if result.session_result.selection_scope is not None:
+        lines.insert(5 if result.label is not None else 4, f"session scope: {_describe_selection_scope(result.session_result.selection_scope)}")
+    if result.open_requested:
+        lines.append(f"open executor: {result.executor_mode or 'browser_stub'}")
+
+    if result.import_result is not None and result.import_result.errors:
+        lines.append("import errors:")
+        lines.extend(f"- {error}" for error in result.import_result.errors)
+
+    resume_lines = _render_run_resume_lines(result)
+    if resume_lines:
+        lines.append("resume variants:")
+        lines.extend(resume_lines)
+
+    if show_portal_hints:
+        portal_lines = _render_run_portal_lines(result)
+        if portal_lines:
+            lines.append("portal hint details:")
+            lines.extend(portal_lines)
+
+    _append_guidance(
+        lines,
+        "next:",
+        _session_start_next_commands(
+            manifest_path=result.manifest_path,
+            opened_in_browser=_reports_include_opened(result.session_result.execution_reports),
+            show_portal_hints=show_portal_hints,
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_run_error_report(paths: WorkspacePaths, error: str) -> str:
+    lines = [
+        "jobs_ai run",
+        f"database path: {paths.database_path}",
+        "status: failed",
+        f"error: {error}",
+    ]
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            'jobs-ai run "python backend engineer remote" --limit 25 --open',
+            _cli_example('discover "python backend engineer remote" --collect --import'),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def build_run_report_payload(
+    paths: WorkspacePaths,
+    result: RunWorkflowResult,
+    *,
+    show_portal_hints: bool = False,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "command": "jobs_ai run",
+        "database_path": str(paths.database_path),
+        "query": result.query,
+        "workflow_dir": str(result.output_dir),
+        "label": result.label,
+        "confirmed_source_count": result.confirmed_source_count,
+        "workday_manual_review_count": _discover_workday_manual_review_count(result.discover_run.report),
+        "collected_source_count": len(result.collected_sources),
+        "collect_limit": result.collect_limit,
+        "imported_jobs_count": result.imported_jobs_count,
+        "import_batch_id": (
+            result.import_result.batch_id
+            if result.import_result is not None
+            else (result.discover_run.report.run_id or result.output_dir.name)
+        ),
+        "manifest_path": str(result.manifest_path),
+        "selected_jobs_count": result.session_result.selected_count,
+        "launchable_jobs_count": result.session_result.plan.launchable_items,
+        "recommendation_count": result.recommendation_count,
+        "resolved_resume_count": result.session_result.resolved_resume_count,
+        "portal_hint_count": result.portal_hint_count,
+        "session_limit": result.session_limit,
+        "open_requested": result.open_requested,
+        "executor_mode": result.executor_mode,
+        "selection_scope": _selection_scope_payload(result.session_result.selection_scope),
+        "next_commands": list(
+            _session_start_next_commands(
+                manifest_path=result.manifest_path,
+                opened_in_browser=_reports_include_opened(result.session_result.execution_reports),
+                show_portal_hints=show_portal_hints,
+            )
+        ),
+        "resume_variants": [
+            _run_resume_payload_line(item)
+            for item in _unique_run_resume_items(result)
+        ],
+    }
+    if result.import_result is not None:
+        payload["import_errors"] = list(result.import_result.errors)
+    if show_portal_hints:
+        payload["portal_hint_details"] = [
+            _run_portal_payload_line(item)
+            for item in result.session_result.items
+            if item.portal_support is not None
+        ]
+    return payload
+
+
+def render_run_json(
+    paths: WorkspacePaths,
+    result: RunWorkflowResult,
+    *,
+    show_portal_hints: bool = False,
+) -> str:
+    return json.dumps(
+        build_run_report_payload(
+            paths,
+            result,
+            show_portal_hints=show_portal_hints,
+        ),
+        indent=2,
+        ensure_ascii=True,
+    )
+
+
 def render_preflight_report(manifest: SessionManifest) -> str:
     lines = [
         "jobs_ai preflight",
@@ -566,6 +1286,12 @@ def render_preflight_report(manifest: SessionManifest) -> str:
         f"warnings: {manifest.warning_count}",
         f"status: {'success with warnings' if manifest.warning_count else 'success'}",
     ]
+    if manifest.label is not None:
+        lines.insert(3, f"label: {manifest.label}")
+    if manifest.selection_scope is not None:
+        lines.insert(3, f"selection scope: {_describe_selection_scope(manifest.selection_scope)}")
+        if manifest.selection_scope.source_query is not None:
+            lines.insert(4, f"source query: {manifest.selection_scope.source_query}")
     if not manifest.items:
         lines.append("preview: empty manifest")
         _append_guidance(lines, "next:", (_cli_example("export-session"),))
@@ -617,6 +1343,12 @@ def render_launch_plan_report(plan: LaunchPlan) -> str:
         f"skipped items: {plan.skipped_items}",
         f"status: {'success with skipped items' if plan.skipped_items else 'success'}",
     ]
+    if plan.label is not None:
+        lines.insert(3, f"label: {plan.label}")
+    if plan.selection_scope is not None:
+        lines.insert(3, f"selection scope: {_describe_selection_scope(plan.selection_scope)}")
+        if plan.selection_scope.source_query is not None:
+            lines.insert(4, f"source query: {plan.selection_scope.source_query}")
     if not plan.items:
         lines.append("plan: empty manifest")
         _append_guidance(lines, "next:", (_cli_example("export-session"),))
@@ -856,6 +1588,55 @@ def render_application_tracking_list_report(
     return "\n".join(lines)
 
 
+def render_session_mark_report(
+    paths: WorkspacePaths,
+    result: SessionMarkResult,
+) -> str:
+    status = "success"
+    if result.skipped:
+        status = "success with skips" if result.updated else "failed"
+    elif not result.updated:
+        status = "failed"
+
+    lines = [
+        "jobs_ai session mark",
+        f"database path: {paths.database_path}",
+        f"requested status: {result.requested_status}",
+        f"target source: {result.source_label}",
+        f"target scope: {result.scope_label}",
+        f"updated jobs: {len(result.updated)}",
+        f"skipped targets: {len(result.skipped)}",
+        f"status: {status}",
+    ]
+    if result.manifest_path is not None:
+        lines.insert(2, f"manifest path: {result.manifest_path}")
+    if result.manifest_item_count is not None:
+        lines.append(f"manifest items: {result.manifest_item_count}")
+    if result.manifest_launchable_count is not None:
+        lines.append(f"manifest launchable items: {result.manifest_launchable_count}")
+
+    if result.updated:
+        lines.append("updated:")
+        lines.extend(
+            (
+                f"- [job {snapshot.job_id}] {snapshot.company} | "
+                f"{snapshot.title} | {snapshot.location or 'location missing'}"
+            )
+            for snapshot in result.updated
+        )
+
+    if result.skipped:
+        lines.append("skipped:")
+        lines.extend(f"- {issue.target}: {issue.reason}" for issue in result.skipped)
+
+    _append_guidance(
+        lines,
+        "next:",
+        (_cli_example(f"track list --status {result.requested_status}"),),
+    )
+    return "\n".join(lines)
+
+
 def render_application_tracking_status_report(
     paths: WorkspacePaths,
     detail: ApplicationStatusDetail,
@@ -896,6 +1677,23 @@ def render_application_tracking_error_report(
     )
 
 
+def render_session_mark_error_report(
+    paths: WorkspacePaths,
+    error: str,
+    *,
+    manifest_path: Path | None = None,
+) -> str:
+    lines = [
+        "jobs_ai session mark",
+        f"database path: {paths.database_path}",
+        "status: failed",
+        f"error: {error}",
+    ]
+    if manifest_path is not None:
+        lines.insert(2, f"manifest path: {manifest_path}")
+    return "\n".join(lines)
+
+
 def render_launch_dry_run_error_report(manifest_path: Path, error: str) -> str:
     lines = [
         "jobs_ai launch-dry-run",
@@ -927,6 +1725,153 @@ def _format_manifest_selection(selection: ManifestSelection | None, *, fallback:
     if selection.label:
         return selection.label
     return fallback
+
+
+def _count_launch_execution_status(
+    reports: Sequence[LaunchExecutionReport],
+    status: str,
+) -> int:
+    return sum(1 for report in reports if report.status == status)
+
+
+def _reports_include_opened(reports: Sequence[LaunchExecutionReport]) -> bool:
+    return any(report.status == "opened" for report in reports)
+
+
+def _format_resume_file_line(
+    resolved_resume_path: Path | None,
+    fallback_reason: str | None,
+) -> str:
+    if resolved_resume_path is not None:
+        return f"   resume file: {resolved_resume_path}"
+    if fallback_reason is not None:
+        return f"   resume file: unresolved ({fallback_reason})"
+    return "   resume file: unresolved"
+
+
+def _unique_run_resume_items(result: RunWorkflowResult) -> tuple[tuple[str, str, Path | None, str | None], ...]:
+    seen_keys: set[str] = set()
+    ordered_items: list[tuple[str, str, Path | None, str | None]] = []
+    for item in result.session_result.items:
+        key = item.preview.resume_variant_key
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        ordered_items.append(
+            (
+                key,
+                item.preview.resume_variant_label,
+                item.resolved_resume_path,
+                item.resume_fallback_reason,
+            )
+        )
+    return tuple(ordered_items)
+
+
+def _render_run_resume_lines(result: RunWorkflowResult) -> list[str]:
+    lines: list[str] = []
+    for key, label, resolved_resume_path, fallback_reason in _unique_run_resume_items(result):
+        if resolved_resume_path is not None:
+            lines.append(f"- {key} ({label}): {resolved_resume_path}")
+        elif fallback_reason is not None:
+            lines.append(f"- {key} ({label}): unresolved | {fallback_reason}")
+        else:
+            lines.append(f"- {key} ({label}): unresolved")
+    return lines
+
+
+def _run_resume_payload_line(
+    item: tuple[str, str, Path | None, str | None],
+) -> dict[str, str | None]:
+    key, label, resolved_resume_path, fallback_reason = item
+    return {
+        "variant_key": key,
+        "variant_label": label,
+        "resolved_resume_path": str(resolved_resume_path) if resolved_resume_path is not None else None,
+        "fallback_reason": fallback_reason,
+    }
+
+
+def _render_run_portal_lines(result: RunWorkflowResult) -> list[str]:
+    return [
+        _run_portal_line(item)
+        for item in result.session_result.items
+        if item.portal_support is not None
+    ]
+
+
+def _run_portal_line(item) -> str:
+    portal_support = item.portal_support
+    assert portal_support is not None
+    launch_url = portal_support.company_apply_url or portal_support.normalized_apply_url
+    return (
+        f"- [job {item.preview.job_id}] {portal_support.portal_label} | "
+        f"{launch_url} | {portal_support.hints[0]}"
+    )
+
+
+def _run_portal_payload_line(item) -> dict[str, object]:
+    portal_support = item.portal_support
+    assert portal_support is not None
+    return {
+        "job_id": item.preview.job_id,
+        "portal_label": portal_support.portal_label,
+        "launch_url": portal_support.company_apply_url or portal_support.normalized_apply_url,
+        "hints": list(portal_support.hints),
+    }
+
+
+def _import_next_commands(result: JobImportResult) -> tuple[str, ...]:
+    commands = []
+    if result.batch_id is not None:
+        commands.append(_cli_example(f"session start --batch-id {result.batch_id} --limit 25"))
+    commands.append(_cli_example("score"))
+    return tuple(commands)
+
+
+def _import_summary_next_commands(import_summary) -> tuple[str, ...]:
+    if import_summary.batch_id is not None:
+        return (_cli_example(f"session start --batch-id {import_summary.batch_id} --limit 25"),)
+    return (_cli_example("session start --limit 25"),)
+
+
+def _describe_selection_scope(selection_scope: SessionSelectionScope) -> str:
+    if selection_scope.batch_id is not None:
+        return f"batch {selection_scope.batch_id}"
+    return "global new-job pool"
+
+
+def _selection_scope_payload(selection_scope: SessionSelectionScope | None) -> dict[str, str | None] | None:
+    if selection_scope is None:
+        return None
+    return {
+        "batch_id": selection_scope.batch_id,
+        "source_query": selection_scope.source_query,
+        "import_source": selection_scope.import_source,
+    }
+
+
+def _session_start_next_commands(
+    *,
+    manifest_path: Path,
+    opened_in_browser: bool,
+    show_portal_hints: bool,
+) -> tuple[str, ...]:
+    application_assist_command = _cli_example(
+        f"application-assist{' --portal-hints' if show_portal_hints else ''} {manifest_path}"
+    )
+    if opened_in_browser:
+        return (
+            application_assist_command,
+            _cli_example(f"session mark opened --manifest {manifest_path} --all"),
+            _cli_example("track list"),
+        )
+    return (
+        _cli_example(f"preflight {manifest_path}"),
+        application_assist_command,
+        _cli_example(f"launch-dry-run --executor browser_stub {manifest_path}"),
+        _cli_example("track list"),
+    )
 
 
 def _launch_dry_run_sort_key(report: LaunchExecutionReport) -> tuple[int, str, str, str, str, str]:

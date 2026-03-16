@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from contextlib import closing
 from collections.abc import Mapping
+from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
-REQUIRED_TABLES = ("jobs", "applications", "application_tracking")
+from .jobs.identity import (
+    build_job_identity,
+    normalize_optional_metadata,
+)
+
+REQUIRED_TABLES = ("jobs", "applications", "application_tracking", "session_history")
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -20,6 +26,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     salary_text TEXT,
     posted_at TEXT,
     found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ingest_batch_id TEXT,
+    source_query TEXT,
+    import_source TEXT,
+    canonical_apply_url TEXT,
+    identity_key TEXT,
     status TEXT NOT NULL DEFAULT 'new',
     raw_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -47,11 +58,29 @@ CREATE TABLE IF NOT EXISTS application_tracking (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS session_history (
+    id INTEGER PRIMARY KEY,
+    manifest_path TEXT NOT NULL,
+    item_count INTEGER NOT NULL,
+    launchable_count INTEGER NOT NULL,
+    ingest_batch_id TEXT,
+    source_query TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_apply_url ON jobs(apply_url);
 CREATE INDEX IF NOT EXISTS idx_jobs_source_company_title_location
 ON jobs(source, company, title, location);
 CREATE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
 CREATE INDEX IF NOT EXISTS idx_application_tracking_job_id ON application_tracking(job_id);
+CREATE INDEX IF NOT EXISTS idx_session_history_created_at ON session_history(created_at);
+CREATE INDEX IF NOT EXISTS idx_session_history_ingest_batch_id ON session_history(ingest_batch_id);
+"""
+
+POST_SCHEMA_SQL = """
+CREATE INDEX IF NOT EXISTS idx_jobs_ingest_batch_id ON jobs(ingest_batch_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_canonical_apply_url ON jobs(canonical_apply_url);
+CREATE INDEX IF NOT EXISTS idx_jobs_identity_key ON jobs(identity_key);
 """
 
 JOB_INSERT_SQL = """
@@ -66,6 +95,11 @@ INSERT INTO jobs (
     salary_text,
     posted_at,
     found_at,
+    ingest_batch_id,
+    source_query,
+    import_source,
+    canonical_apply_url,
+    identity_key,
     raw_json
 ) VALUES (
     ?,
@@ -78,6 +112,11 @@ INSERT INTO jobs (
     ?,
     ?,
     COALESCE(?, CURRENT_TIMESTAMP),
+    ?,
+    ?,
+    ?,
+    ?,
+    ?,
     ?
 )
 """
@@ -89,15 +128,96 @@ WHERE apply_url = ?
 LIMIT 1
 """
 
-EXACT_COMPOSITE_MATCH_SQL = """
+CANONICAL_APPLY_URL_MATCH_SQL = """
 SELECT id
 FROM jobs
-WHERE source = ?
-  AND company = ?
-  AND title = ?
-  AND location = ?
+WHERE canonical_apply_url = ?
 LIMIT 1
 """
+
+IDENTITY_KEY_MATCH_SQL = """
+SELECT id
+FROM jobs
+WHERE identity_key = ?
+LIMIT 1
+"""
+
+GET_INGEST_BATCH_SUMMARY_SQL = """
+SELECT
+    ingest_batch_id,
+    MIN(source_query) AS source_query,
+    MIN(import_source) AS import_source,
+    COUNT(*) AS job_count
+FROM jobs
+WHERE ingest_batch_id = ?
+GROUP BY ingest_batch_id
+LIMIT 1
+"""
+
+SESSION_HISTORY_INSERT_SQL = """
+INSERT INTO session_history (
+    manifest_path,
+    item_count,
+    launchable_count,
+    ingest_batch_id,
+    source_query,
+    created_at
+) VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+"""
+
+LIST_RECENT_SESSION_HISTORY_SQL = """
+SELECT
+    id,
+    manifest_path,
+    item_count,
+    launchable_count,
+    ingest_batch_id,
+    source_query,
+    created_at
+FROM session_history
+ORDER BY datetime(created_at) DESC, id DESC
+LIMIT ?
+"""
+
+GET_SESSION_HISTORY_BY_ID_SQL = """
+SELECT
+    id,
+    manifest_path,
+    item_count,
+    launchable_count,
+    ingest_batch_id,
+    source_query,
+    created_at
+FROM session_history
+WHERE id = ?
+LIMIT 1
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicateJobMatch:
+    job_id: int
+    rule: str
+    matched_value: str
+
+
+@dataclass(frozen=True, slots=True)
+class IngestBatchSummary:
+    batch_id: str
+    source_query: str | None
+    import_source: str | None
+    job_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SessionHistoryEntry:
+    session_id: int
+    manifest_path: Path
+    item_count: int
+    launchable_count: int
+    batch_id: str | None
+    source_query: str | None
+    created_at: str
 
 
 def connect_database(database_path: Path) -> sqlite3.Connection:
@@ -107,10 +227,13 @@ def connect_database(database_path: Path) -> sqlite3.Connection:
     return connection
 
 
-def initialize_schema(database_path: Path) -> None:
+def initialize_schema(database_path: Path, *, backfill_identity: bool = True) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with closing(connect_database(database_path)) as connection:
-        connection.executescript(SCHEMA_SQL)
+        _initialize_schema_connection(
+            connection,
+            backfill_identity=backfill_identity,
+        )
         connection.commit()
 
 
@@ -134,6 +257,7 @@ def schema_exists(database_path: Path) -> bool:
 
 
 def insert_job(connection: sqlite3.Connection, job_record: Mapping[str, str | None]) -> int:
+    identity = build_job_identity(job_record)
     cursor = connection.execute(
         JOB_INSERT_SQL,
         (
@@ -147,30 +271,273 @@ def insert_job(connection: sqlite3.Connection, job_record: Mapping[str, str | No
             job_record.get("salary_text"),
             job_record.get("posted_at"),
             job_record.get("found_at"),
+            normalize_optional_metadata(job_record.get("ingest_batch_id")),
+            normalize_optional_metadata(job_record.get("source_query")),
+            normalize_optional_metadata(job_record.get("import_source")),
+            identity.canonical_apply_url,
+            identity.identity_key,
             job_record["raw_json"],
         ),
     )
     return int(cursor.lastrowid)
 
 
+def find_duplicate_job_match(
+    connection: sqlite3.Connection,
+    job_record: Mapping[str, str | None],
+) -> DuplicateJobMatch | None:
+    apply_url = job_record.get("apply_url")
+    if apply_url is not None:
+        row = connection.execute(
+            EXACT_APPLY_URL_MATCH_SQL,
+            (apply_url,),
+        ).fetchone()
+        if row is not None:
+            return DuplicateJobMatch(
+                job_id=int(row["id"]),
+                rule="exact apply_url match",
+                matched_value=apply_url,
+            )
+
+    identity = build_job_identity(job_record)
+    if identity.canonical_apply_url is not None:
+        row = connection.execute(
+            CANONICAL_APPLY_URL_MATCH_SQL,
+            (identity.canonical_apply_url,),
+        ).fetchone()
+        if row is not None:
+            return DuplicateJobMatch(
+                job_id=int(row["id"]),
+                rule="canonical apply_url match",
+                matched_value=identity.canonical_apply_url,
+            )
+
+    if not _should_use_identity_key_match(job_record):
+        return None
+
+    row = connection.execute(
+        IDENTITY_KEY_MATCH_SQL,
+        (identity.identity_key,),
+    ).fetchone()
+    if row is None:
+        return None
+    return DuplicateJobMatch(
+        job_id=int(row["id"]),
+        rule="identity key match",
+        matched_value=_describe_identity_match(job_record),
+    )
+
+
 def find_duplicate_job_id(
     connection: sqlite3.Connection,
     job_record: Mapping[str, str | None],
 ) -> int | None:
-    apply_url = job_record.get("apply_url")
-    if apply_url is not None:
-        row = connection.execute(EXACT_APPLY_URL_MATCH_SQL, (apply_url,)).fetchone()
-    else:
-        row = connection.execute(
-            EXACT_COMPOSITE_MATCH_SQL,
-            (
-                job_record["source"],
-                job_record["company"],
-                job_record["title"],
-                job_record["location"],
-            ),
-        ).fetchone()
+    match = find_duplicate_job_match(connection, job_record)
+    if match is None:
+        return None
+    return match.job_id
 
+
+def get_ingest_batch_summary(
+    database_path: Path,
+    *,
+    batch_id: str,
+) -> IngestBatchSummary | None:
+    with closing(connect_database(database_path)) as connection:
+        row = connection.execute(
+            GET_INGEST_BATCH_SUMMARY_SQL,
+            (batch_id,),
+        ).fetchone()
     if row is None:
         return None
-    return int(row["id"])
+    return IngestBatchSummary(
+        batch_id=str(row["ingest_batch_id"]),
+        source_query=_nullable_text(row["source_query"]),
+        import_source=_nullable_text(row["import_source"]),
+        job_count=int(row["job_count"]),
+    )
+
+
+def record_session_history(
+    database_path: Path,
+    *,
+    manifest_path: Path,
+    item_count: int,
+    launchable_count: int,
+    batch_id: str | None,
+    source_query: str | None,
+    created_at: str | None = None,
+) -> int:
+    with closing(connect_database(database_path)) as connection:
+        cursor = connection.execute(
+            SESSION_HISTORY_INSERT_SQL,
+            (
+                str(manifest_path),
+                item_count,
+                launchable_count,
+                normalize_optional_metadata(batch_id),
+                normalize_optional_metadata(source_query),
+                normalize_optional_metadata(created_at),
+            ),
+        )
+        connection.commit()
+    return int(cursor.lastrowid)
+
+
+def list_recent_session_history(
+    database_path: Path,
+    *,
+    limit: int,
+) -> tuple[SessionHistoryEntry, ...]:
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+
+    with closing(connect_database(database_path)) as connection:
+        rows = connection.execute(
+            LIST_RECENT_SESSION_HISTORY_SQL,
+            (limit,),
+        ).fetchall()
+    return tuple(_session_history_entry_from_row(row) for row in rows)
+
+
+def get_session_history_entry(
+    database_path: Path,
+    *,
+    session_id: int,
+) -> SessionHistoryEntry | None:
+    with closing(connect_database(database_path)) as connection:
+        row = connection.execute(
+            GET_SESSION_HISTORY_BY_ID_SQL,
+            (session_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _session_history_entry_from_row(row)
+
+
+def jobs_table_columns(connection: sqlite3.Connection) -> tuple[str, ...]:
+    return _table_columns(connection, "jobs")
+
+
+def initialize_schema_connection(
+    connection: sqlite3.Connection,
+    *,
+    backfill_identity: bool = True,
+) -> None:
+    _initialize_schema_connection(
+        connection,
+        backfill_identity=backfill_identity,
+    )
+
+
+def _initialize_schema_connection(
+    connection: sqlite3.Connection,
+    *,
+    backfill_identity: bool,
+) -> None:
+    connection.executescript(SCHEMA_SQL)
+    _ensure_jobs_columns(connection)
+    connection.executescript(POST_SCHEMA_SQL)
+    if backfill_identity:
+        _backfill_job_identity_columns(connection)
+
+
+def _ensure_jobs_columns(connection: sqlite3.Connection) -> None:
+    existing_columns = set(_table_columns(connection, "jobs"))
+    required_columns = {
+        "ingest_batch_id": "TEXT",
+        "source_query": "TEXT",
+        "import_source": "TEXT",
+        "canonical_apply_url": "TEXT",
+        "identity_key": "TEXT",
+    }
+    for column_name, column_type in required_columns.items():
+        if column_name in existing_columns:
+            continue
+        connection.execute(f"ALTER TABLE jobs ADD COLUMN {column_name} {column_type}")
+
+
+def _backfill_job_identity_columns(connection: sqlite3.Connection) -> None:
+    rows = connection.execute(
+        """
+        SELECT
+            id,
+            source,
+            source_job_id,
+            company,
+            title,
+            location,
+            apply_url,
+            portal_type
+        FROM jobs
+        WHERE canonical_apply_url IS NULL
+           OR identity_key IS NULL
+        """
+    ).fetchall()
+    for row in rows:
+        identity = build_job_identity(row)
+        connection.execute(
+            """
+            UPDATE jobs
+            SET canonical_apply_url = ?,
+                identity_key = ?
+            WHERE id = ?
+            """,
+            (
+                identity.canonical_apply_url,
+                identity.identity_key,
+                int(row["id"]),
+            ),
+        )
+
+
+def _session_history_entry_from_row(row: sqlite3.Row) -> SessionHistoryEntry:
+    return SessionHistoryEntry(
+        session_id=int(row["id"]),
+        manifest_path=Path(str(row["manifest_path"])),
+        item_count=int(row["item_count"]),
+        launchable_count=int(row["launchable_count"]),
+        batch_id=_nullable_text(row["ingest_batch_id"]),
+        source_query=_nullable_text(row["source_query"]),
+        created_at=str(row["created_at"]),
+    )
+
+
+def _table_columns(connection: sqlite3.Connection, table_name: str) -> tuple[str, ...]:
+    return tuple(
+        str(row["name"])
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    )
+
+
+def _should_use_identity_key_match(job_record: Mapping[str, str | None]) -> bool:
+    return job_record.get("apply_url") is None or job_record.get("source_job_id") is not None
+
+
+def _describe_identity_match(job_record: Mapping[str, str | None]) -> str:
+    source_job_id = _nullable_text(job_record.get("source_job_id"))
+    if source_job_id is not None:
+        anchor = (
+            _nullable_text(job_record.get("portal_type"))
+            or _nullable_text(job_record.get("source"))
+            or "unknown"
+        )
+        return f"{anchor} | source_job_id {source_job_id}"
+    return " | ".join(
+        value
+        for value in (
+            _nullable_text(job_record.get("source")) or "source missing",
+            _nullable_text(job_record.get("company")) or "company missing",
+            _nullable_text(job_record.get("title")) or "title missing",
+            _nullable_text(job_record.get("location")) or "location missing",
+        )
+    )
+
+
+def _nullable_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized_value = value.strip()
+        return normalized_value or None
+    return str(value)

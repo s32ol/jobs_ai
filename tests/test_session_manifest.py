@@ -80,6 +80,7 @@ class SessionManifestTest(unittest.TestCase):
             self.assertEqual(manifest.warning_count, 0)
 
             item = manifest.items[0]
+            self.assertIsInstance(item.job_id, int)
             self.assertEqual(item.company, "Northwind Talent")
             self.assertEqual(item.title, "Senior Data Engineer")
             self.assertEqual(item.apply_url, "https://agency.example/jobs/2")

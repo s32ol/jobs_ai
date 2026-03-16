@@ -33,7 +33,7 @@ class DatabaseTest(unittest.TestCase):
                     SELECT name
                     FROM sqlite_master
                     WHERE type = 'table'
-                      AND name IN ('jobs', 'applications', 'application_tracking')
+                      AND name IN ('jobs', 'applications', 'application_tracking', 'session_history')
                     """
                 ).fetchall()
                 index_rows = connection.execute(
@@ -44,22 +44,32 @@ class DatabaseTest(unittest.TestCase):
                       AND name IN (
                           'idx_jobs_apply_url',
                           'idx_jobs_source_company_title_location',
+                          'idx_jobs_ingest_batch_id',
+                          'idx_jobs_canonical_apply_url',
+                          'idx_jobs_identity_key',
                           'idx_applications_job_id',
-                          'idx_application_tracking_job_id'
+                          'idx_application_tracking_job_id',
+                          'idx_session_history_created_at',
+                          'idx_session_history_ingest_batch_id'
                       )
                     """
                 ).fetchall()
             self.assertEqual(
                 {row["name"] for row in table_rows},
-                {"jobs", "applications", "application_tracking"},
+                {"jobs", "applications", "application_tracking", "session_history"},
             )
             self.assertEqual(
                 {row["name"] for row in index_rows},
                 {
                     "idx_jobs_apply_url",
                     "idx_jobs_source_company_title_location",
+                    "idx_jobs_ingest_batch_id",
+                    "idx_jobs_canonical_apply_url",
+                    "idx_jobs_identity_key",
                     "idx_applications_job_id",
                     "idx_application_tracking_job_id",
+                    "idx_session_history_created_at",
+                    "idx_session_history_ingest_batch_id",
                 },
             )
 

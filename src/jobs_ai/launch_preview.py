@@ -28,8 +28,13 @@ def select_launch_preview(
     database_path: Path,
     *,
     limit: int | None = None,
+    ingest_batch_id: str | None = None,
 ) -> tuple[LaunchPreview, ...]:
-    recommendations = select_queue_recommendations(database_path, limit=limit)
+    recommendations = select_queue_recommendations(
+        database_path,
+        limit=limit,
+        ingest_batch_id=ingest_batch_id,
+    )
     return tuple(_preview_from_recommendation(recommendation) for recommendation in recommendations)
 
 

@@ -257,7 +257,7 @@ class ImportTest(unittest.TestCase):
             self.assertIn("skipped: 1", result.stdout)
             self.assertIn("status: success", result.stdout)
             self.assertIn(
-                "record 2: duplicate skipped via exact fallback key: "
+                "record 2: duplicate skipped via identity key match: "
                 "manual | Bright Metrics | Platform Data Engineer | Remote",
                 result.stdout,
             )
@@ -314,6 +314,119 @@ class ImportTest(unittest.TestCase):
                     "https://example.com/jobs/platform-data-engineer-v2",
                 ],
             )
+
+    def test_cli_import_skips_duplicate_by_canonical_portal_apply_url_across_runs(self) -> None:
+        first_payload = [
+            {
+                "source": "manual",
+                "company": "Acme Data",
+                "title": "Data Engineer",
+                "location": "Remote",
+                "apply_url": "https://boards.greenhouse.io/acme?gh_jid=12345&gh_src=linkedin",
+                "portal_type": "greenhouse",
+            }
+        ]
+        second_payload = [
+            {
+                "source": "manual",
+                "company": "Acme Data",
+                "title": "Data Engineer",
+                "location": "Remote",
+                "apply_url": "https://boards.greenhouse.io/acme/jobs/12345?utm_source=jobs",
+                "portal_type": "greenhouse",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            database_path = tmp_path / "runtime" / "jobs_ai.db"
+            first_input_path = tmp_path / "first_job_leads.json"
+            second_input_path = tmp_path / "second_job_leads.json"
+            first_input_path.write_text(json.dumps(first_payload), encoding="utf-8")
+            second_input_path.write_text(json.dumps(second_payload), encoding="utf-8")
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+
+            first_result = RUNNER.invoke(
+                app,
+                ["import", str(first_input_path), "--batch-id", "first-run"],
+                env=env,
+            )
+            second_result = RUNNER.invoke(
+                app,
+                ["import", str(second_input_path), "--batch-id", "second-run"],
+                env=env,
+            )
+
+            self.assertEqual(first_result.exit_code, 0)
+            self.assertEqual(second_result.exit_code, 0)
+            self.assertIn("inserted: 1", first_result.stdout)
+            self.assertIn("inserted: 0", second_result.stdout)
+            self.assertIn("duplicates skipped: 1", second_result.stdout)
+            self.assertIn(
+                "record 1: duplicate skipped via canonical apply_url match: "
+                "https://boards.greenhouse.io/acme/jobs/12345",
+                second_result.stdout,
+            )
+
+            with closing(connect_database(database_path)) as connection:
+                rows = connection.execute(
+                    "SELECT apply_url, canonical_apply_url, ingest_batch_id FROM jobs ORDER BY id"
+                ).fetchall()
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["canonical_apply_url"], "https://boards.greenhouse.io/acme/jobs/12345")
+            self.assertEqual(rows[0]["ingest_batch_id"], "first-run")
+
+    def test_cli_import_tags_rows_with_batch_metadata_for_later_session_scoping(self) -> None:
+        payload = [
+            {
+                "source": "manual",
+                "company": "Acme Data",
+                "title": "Data Engineer",
+                "location": "Remote",
+                "apply_url": "https://example.com/jobs/data-engineer",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            database_path = tmp_path / "runtime" / "jobs_ai.db"
+            input_path = tmp_path / "batch_tagged_job_leads.json"
+            input_path.write_text(json.dumps(payload), encoding="utf-8")
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+
+            result = RUNNER.invoke(
+                app,
+                [
+                    "import",
+                    str(input_path),
+                    "--batch-id",
+                    "evening batch",
+                    "--source-query",
+                    "python backend engineer remote",
+                ],
+                env=env,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("batch id: evening-batch", result.stdout)
+            self.assertIn("source query: python backend engineer remote", result.stdout)
+            self.assertIn(
+                "python -m jobs_ai session start --batch-id evening-batch --limit 25",
+                result.stdout,
+            )
+
+            with closing(connect_database(database_path)) as connection:
+                row = connection.execute(
+                    """
+                    SELECT ingest_batch_id, source_query, import_source
+                    FROM jobs
+                    """
+                ).fetchone()
+
+            self.assertEqual(row["ingest_batch_id"], "evening-batch")
+            self.assertEqual(row["source_query"], "python backend engineer remote")
+            self.assertEqual(row["import_source"], str(input_path))
 
     def test_cli_import_reports_invalid_records_clearly(self) -> None:
         payload = [

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-DEFAULT_FETCH_USER_AGENT = "jobs_ai/0.1.0"
+DEFAULT_FETCH_USER_AGENT = "jobs_ai/1.0.0"
 
 
 @dataclass(frozen=True, slots=True)

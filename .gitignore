@@ -52,3 +52,8 @@ dist/
 # Processed data outputs
 /data/processed/*
 !/data/processed/.gitkeep
+
+# Local ChatGPT source bundles
+/_chatgpt_sources_bundle/
+/chatgpt_sources_bundle/
+/chatgpt_sources_bundle_pass2/

@@ -17,7 +17,8 @@ if str(SRC_PATH) not in sys.path:
 
 from jobs_ai.cli import app
 from jobs_ai.db import connect_database, initialize_schema, insert_job
-from jobs_ai.session_export import export_launch_preview_session
+from jobs_ai.launch_preview import select_launch_preview
+from jobs_ai.session_export import export_launch_preview_session, export_launch_previews_session
 
 RUNNER = CliRunner()
 
@@ -213,6 +214,40 @@ class SessionExportTest(unittest.TestCase):
             self.assertEqual(result.limit, 2)
             self.assertEqual(payload["item_count"], 2)
             self.assertEqual([item["job_id"] for item in payload["items"]], [top_job_id, second_job_id])
+
+    def test_export_launch_previews_session_accepts_prebuilt_batch_and_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            exports_dir = Path(tmp_dir) / "data" / "exports"
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                insert_job(
+                    connection,
+                    _job_record(
+                        source="staffing recruiter",
+                        company="Northwind Talent",
+                        title="Senior Data Engineer",
+                        location="Remote",
+                        apply_url="https://agency.example/jobs/2",
+                        raw_payload={"description": "Python BigQuery GCP pipelines"},
+                    ),
+                )
+                connection.commit()
+
+            previews = select_launch_preview(database_path)
+            result = export_launch_previews_session(
+                previews,
+                exports_dir,
+                created_at=datetime(2026, 3, 13, 19, 15, 0, tzinfo=timezone.utc),
+                label="morning batch",
+            )
+            payload = json.loads(result.export_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(result.label, "morning-batch")
+            self.assertIn("launch-preview-session-morning-batch-", result.export_path.name)
+            self.assertEqual(payload["label"], "morning-batch")
+            self.assertEqual(payload["item_count"], 1)
 
 
 if __name__ == "__main__":

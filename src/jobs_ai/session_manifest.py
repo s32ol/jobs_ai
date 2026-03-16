@@ -17,6 +17,7 @@ class ManifestSelection:
 class ManifestItem:
     index: int
     rank: int | None
+    job_id: int | None
     company: str | None
     title: str | None
     apply_url: str | None
@@ -26,9 +27,18 @@ class ManifestItem:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionSelectionScope:
+    batch_id: str | None
+    source_query: str | None
+    import_source: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class SessionManifest:
     manifest_path: Path
     created_at: str
+    label: str | None
+    selection_scope: SessionSelectionScope | None
     item_count: int
     items: tuple[ManifestItem, ...]
 
@@ -43,6 +53,11 @@ def load_session_manifest(manifest_path: Path) -> SessionManifest:
         raise ValueError("manifest must be a JSON object")
 
     created_at = _require_iso8601_timestamp(payload.get("created_at"), "manifest.created_at")
+    label = _optional_string(payload.get("label"), "manifest.label")
+    selection_scope = _selection_scope_from_payload(
+        payload.get("selection_scope"),
+        "manifest.selection_scope",
+    )
     item_count = _require_int(payload.get("item_count"), "manifest.item_count")
     if item_count < 0:
         raise ValueError("manifest.item_count must be greater than or equal to 0")
@@ -63,6 +78,8 @@ def load_session_manifest(manifest_path: Path) -> SessionManifest:
     return SessionManifest(
         manifest_path=manifest_path,
         created_at=created_at,
+        label=label,
+        selection_scope=selection_scope,
         item_count=item_count,
         items=items,
     )
@@ -72,6 +89,10 @@ def _load_manifest_payload(manifest_path: Path) -> object:
     try:
         with manifest_path.open("r", encoding="utf-8") as input_file:
             return json.load(input_file)
+    except FileNotFoundError as exc:
+        raise ValueError(f"manifest was not found: {manifest_path}") from exc
+    except OSError as exc:
+        raise ValueError(f"manifest could not be read: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"manifest is not valid JSON: {exc.msg}") from exc
 
@@ -90,6 +111,9 @@ def _item_from_payload(index: int, payload: object) -> ManifestItem:
         f"{path}.recommended_profile_snippet",
     )
     warnings = []
+    job_id = _optional_int(payload.get("job_id"), f"{path}.job_id")
+    if job_id is not None and job_id < 1:
+        raise ValueError(f"{path}.job_id must be greater than or equal to 1")
 
     company = _optional_string(payload.get("company"), f"{path}.company")
     if company is None:
@@ -111,6 +135,7 @@ def _item_from_payload(index: int, payload: object) -> ManifestItem:
     return ManifestItem(
         index=index,
         rank=_optional_int(payload.get("rank"), f"{path}.rank"),
+        job_id=job_id,
         company=company,
         title=title,
         apply_url=apply_url,
@@ -130,6 +155,19 @@ def _selection_from_payload(payload: object, path: str) -> ManifestSelection | N
         key=_optional_string(payload.get("key"), f"{path}.key"),
         label=_optional_string(payload.get("label"), f"{path}.label"),
         text=_optional_string(payload.get("text"), f"{path}.text"),
+    )
+
+
+def _selection_scope_from_payload(payload: object, path: str) -> SessionSelectionScope | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must be a JSON object when present")
+
+    return SessionSelectionScope(
+        batch_id=_optional_string(payload.get("batch_id"), f"{path}.batch_id"),
+        source_query=_optional_string(payload.get("source_query"), f"{path}.source_query"),
+        import_source=_optional_string(payload.get("import_source"), f"{path}.import_source"),
     )
 
 

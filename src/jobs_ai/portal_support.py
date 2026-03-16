@@ -68,11 +68,7 @@ def detect_portal_type(
         return "lever"
     if _is_ashby_apply_url(parsed_url):
         return "ashby"
-    netloc = parsed_url.netloc.lower()
-    path = parsed_url.path.lower()
-    if "myworkdayjobs.com" in netloc:
-        return "workday"
-    if "workday" in netloc and ("/job/" in path or "/recruiting/" in path):
+    if _is_workday_apply_url(parsed_url):
         return "workday"
     return None
 
@@ -102,6 +98,7 @@ def build_portal_support(
             detected_portal_type,
             urlparse(normalized_apply_url),
         )
+        parsed_url = urlparse(normalized_apply_url)
 
     return PortalSupport(
         portal_type=detected_portal_type,
@@ -109,7 +106,71 @@ def build_portal_support(
         original_apply_url=normalized_text,
         normalized_apply_url=normalized_apply_url,
         company_apply_url=company_apply_url,
-        hints=_PORTAL_HINTS[detected_portal_type],
+        hints=_build_portal_hints(
+            detected_portal_type,
+            parsed_url,
+        ),
+    )
+
+
+def extract_portal_board_root_url(
+    apply_url: str | None,
+    *,
+    portal_type: str | None = None,
+) -> str | None:
+    portal_support = build_portal_support(apply_url, portal_type=portal_type)
+    if portal_support is None or portal_support.portal_type == "workday":
+        return None
+
+    parsed_url = _parse_apply_url(portal_support.normalized_apply_url)
+    if parsed_url is None:
+        return None
+
+    segments = _path_segments(parsed_url.path)
+    if not segments:
+        return None
+
+    if portal_support.portal_type == "greenhouse":
+        if parsed_url.netloc.lower() not in {"boards.greenhouse.io", "job-boards.greenhouse.io"}:
+            return None
+        board_path = f"/{segments[0]}"
+    elif portal_support.portal_type == "lever":
+        if parsed_url.netloc.lower() != "jobs.lever.co":
+            return None
+        board_path = f"/{segments[0]}"
+    elif portal_support.portal_type == "ashby":
+        if parsed_url.netloc.lower() != "jobs.ashbyhq.com":
+            return None
+        board_path = f"/{segments[0]}"
+    else:
+        return None
+
+    return urlunparse(
+        parsed_url._replace(
+            path=board_path,
+            query="",
+            fragment="",
+        )
+    )
+
+
+def normalize_workday_url(apply_url: str | None) -> str | None:
+    parsed_url = _parse_apply_url(apply_url)
+    if parsed_url is None or not _is_workday_apply_url(parsed_url):
+        return None
+
+    query_pairs = parse_qsl(parsed_url.query, keep_blank_values=True)
+    normalized_pairs = [
+        (key, value)
+        for key, value in query_pairs
+        if not _should_drop_query_param("workday", key, parsed_url.path)
+    ]
+    return urlunparse(
+        parsed_url._replace(
+            path=_normalize_workday_path(parsed_url.path),
+            query=urlencode(normalized_pairs, doseq=True),
+            fragment="",
+        )
     )
 
 
@@ -147,12 +208,15 @@ def _normalize_portal_apply_url(portal_type: str, parsed_url) -> str:
         for key, value in query_pairs
         if not _should_drop_query_param(portal_type, key, parsed_url.path)
     ]
-    return urlunparse(
+    normalized_url = urlunparse(
         parsed_url._replace(
             query=urlencode(normalized_pairs, doseq=True),
             fragment="",
         )
     )
+    if portal_type == "workday":
+        return normalize_workday_url(normalized_url) or normalized_url
+    return normalized_url
 
 
 def _should_drop_query_param(portal_type: str, key: str, path: str) -> bool:
@@ -255,6 +319,29 @@ def _is_ashby_apply_url(parsed_url) -> bool:
     return len(_path_segments(parsed_url.path)) >= 1
 
 
+def _is_workday_apply_url(parsed_url) -> bool:
+    hostname = (parsed_url.hostname or "").lower()
+    if not _is_workday_hostname(hostname):
+        return False
+    return _workday_path_has_job_marker(parsed_url.path)
+
+
+def _is_workday_hostname(hostname: str) -> bool:
+    return (
+        hostname == "myworkdayjobs.com"
+        or hostname.endswith(".myworkdayjobs.com")
+        or hostname == "myworkdaysite.com"
+        or hostname.endswith(".myworkdaysite.com")
+        or hostname == "workday.com"
+        or hostname.endswith(".workday.com")
+    )
+
+
+def _workday_path_has_job_marker(path: str) -> bool:
+    normalized_path = path.lower()
+    return "/job/" in normalized_path or normalized_path.endswith("/job") or "/recruiting/" in normalized_path
+
+
 def _has_query_key(query: str, key: str) -> bool:
     normalized_key = key.lower()
     return any(query_key.lower() == normalized_key for query_key, _ in parse_qsl(query, keep_blank_values=True))
@@ -267,3 +354,80 @@ def _greenhouse_job_path(path: str) -> bool:
 
 def _ashby_job_path(path: str) -> bool:
     return len(_path_segments(path)) >= 2
+
+
+def _normalize_workday_path(path: str) -> str:
+    segments = list(_path_segments(path))
+    if segments and segments[-1].lower() == "apply":
+        segments.pop()
+    if not segments:
+        return "/"
+    return f"/{'/'.join(segments)}"
+
+
+def _build_portal_hints(portal_type: str, parsed_url) -> tuple[str, ...]:
+    hints = list(_PORTAL_HINTS[portal_type])
+    if portal_type != "workday" or parsed_url is None:
+        return tuple(hints)
+
+    tenant_hint = _extract_workday_tenant_hint(parsed_url)
+    if tenant_hint is not None:
+        hints.append(f"Workday tenant hint: {tenant_hint}.")
+
+    site_hint = _extract_workday_site_hint(parsed_url)
+    if site_hint is not None:
+        hints.append(f"Workday site hint: {site_hint}.")
+
+    requisition_hint = _extract_workday_requisition_hint(parsed_url)
+    if requisition_hint is not None:
+        hints.append(f"Workday requisition hint: {requisition_hint}.")
+
+    return tuple(hints)
+
+
+def _extract_workday_tenant_hint(parsed_url) -> str | None:
+    hostname = (parsed_url.hostname or "").lower()
+    if hostname.endswith(".myworkdayjobs.com") or hostname.endswith(".myworkdaysite.com"):
+        tenant = hostname.split(".", 1)[0]
+        return tenant or None
+    segments = _workday_non_locale_segments(parsed_url.path)
+    if "recruiting" in segments:
+        recruiting_index = segments.index("recruiting")
+        if recruiting_index + 1 < len(segments):
+            return segments[recruiting_index + 1]
+    return None
+
+
+def _extract_workday_site_hint(parsed_url) -> str | None:
+    segments = _workday_non_locale_segments(parsed_url.path)
+    if not segments:
+        return None
+    if "job" in segments:
+        job_index = segments.index("job")
+        if job_index > 0:
+            return segments[job_index - 1]
+    if "recruiting" in segments:
+        recruiting_index = segments.index("recruiting")
+        if recruiting_index + 2 < len(segments):
+            return segments[recruiting_index + 2]
+    return None
+
+
+def _extract_workday_requisition_hint(parsed_url) -> str | None:
+    segments = _workday_non_locale_segments(parsed_url.path)
+    if not segments:
+        return None
+    final_segment = segments[-1]
+    if "_" in final_segment:
+        requisition = final_segment.rsplit("_", 1)[-1]
+        return requisition or None
+    if final_segment.lower() != "job":
+        return final_segment or None
+    return None
+
+
+def _workday_non_locale_segments(path: str) -> list[str]:
+    segments = list(_path_segments(path))
+    if segments and len(segments[0]) == 5 and segments[0][2] == "-":
+        segments = segments[1:]
+    return segments

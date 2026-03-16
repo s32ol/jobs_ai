@@ -119,6 +119,62 @@ class ScoreTest(unittest.TestCase):
         self.assertGreater(ranked_jobs[0].total_score, ranked_jobs[1].total_score)
         self.assertGreater(ranked_jobs[1].total_score, ranked_jobs[2].total_score)
 
+    def test_rank_jobs_deprioritizes_missing_apply_urls(self) -> None:
+        ranked_jobs = rank_jobs(
+            [
+                _job_record(
+                    job_id=1,
+                    source="manual",
+                    company="Acme Data",
+                    title="Data Engineer",
+                    location="Remote",
+                    apply_url="https://example.com/jobs/1",
+                    raw_payload={"description": "Python pipelines"},
+                ),
+                _job_record(
+                    job_id=2,
+                    source="manual",
+                    company="Bright Metrics",
+                    title="Data Engineer",
+                    location="Remote",
+                    apply_url=None,
+                    raw_payload={"description": "Python pipelines"},
+                ),
+            ]
+        )
+
+        self.assertEqual([job.job_id for job in ranked_jobs], [1, 2])
+        self.assertEqual(ranked_jobs[0].actionability_score, 0)
+        self.assertEqual(ranked_jobs[1].actionability_score, -8)
+
+    def test_rank_jobs_breaks_score_ties_with_newer_posted_at(self) -> None:
+        ranked_jobs = rank_jobs(
+            [
+                _job_record(
+                    job_id=1,
+                    source="manual",
+                    company="Acme Data",
+                    title="Data Engineer",
+                    location="Remote",
+                    apply_url="https://example.com/jobs/1",
+                    raw_payload={"description": "Python pipelines"},
+                )
+                | {"posted_at": "2026-03-01", "found_at": "2026-03-13T08:00:00Z"},
+                _job_record(
+                    job_id=2,
+                    source="manual",
+                    company="Bright Metrics",
+                    title="Data Engineer",
+                    location="Remote",
+                    apply_url="https://example.com/jobs/2",
+                    raw_payload={"description": "Python pipelines"},
+                )
+                | {"posted_at": "2026-03-10", "found_at": "2026-03-13T08:00:00Z"},
+            ]
+        )
+
+        self.assertEqual([job.job_id for job in ranked_jobs], [2, 1])
+
     def test_cli_score_reports_ranked_jobs_with_reasons(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"

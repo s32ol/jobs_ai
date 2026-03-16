@@ -24,14 +24,16 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIn("jobs_ai control tower", result.stdout)
         self.assertIn("current focus: milestone 11 operational polish", result.stdout)
-        self.assertIn("python -m jobs_ai --help", result.stdout)
+        self.assertIn('jobs-ai run "python backend engineer remote"', result.stdout)
 
     def test_cli_help_includes_typical_sprint_flow(self) -> None:
         result = RUNNER.invoke(app, ["--help"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("Typical sprint flow:", result.stdout)
-        self.assertIn("launch-dry-run -> track", result.stdout)
+        self.assertIn("Preferred daily flow:", result.stdout)
+        self.assertIn("run", result.stdout)
+        self.assertIn("session start", result.stdout)
+        self.assertIn("launch-preview", result.stdout)
 
     def test_load_settings_defaults(self) -> None:
         settings = load_settings({})

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jobs-ai"
-version = "0.1.0"
+version = "1.0.0"
 description = "Pragmatic local job application exoskeleton for technical job searches."
 readme = "README.md"
 requires-python = ">=3.11"

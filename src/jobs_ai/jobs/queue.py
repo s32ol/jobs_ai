@@ -16,9 +16,12 @@ SELECT
     location,
     apply_url,
     portal_type,
+    posted_at,
+    found_at,
     raw_json
 FROM jobs
 WHERE status = 'new'
+  AND (? IS NULL OR ingest_batch_id = ?)
 ORDER BY id
 """
 
@@ -46,9 +49,13 @@ def select_ranked_apply_queue(
     database_path: Path,
     *,
     limit: int | None = None,
+    ingest_batch_id: str | None = None,
 ) -> tuple[RankedQueuedJob, ...]:
     with closing(connect_database(database_path)) as connection:
-        rows = connection.execute(QUEUEABLE_JOBS_SQL).fetchall()
+        rows = connection.execute(
+            QUEUEABLE_JOBS_SQL,
+            (ingest_batch_id, ingest_batch_id),
+        ).fetchall()
 
     ranked_jobs = rank_jobs(rows)
     if limit is not None:
@@ -64,8 +71,17 @@ def select_ranked_apply_queue(
     )
 
 
-def select_apply_queue(database_path: Path, *, limit: int | None = None) -> tuple[QueuedJob, ...]:
-    ranked_queued_jobs = select_ranked_apply_queue(database_path, limit=limit)
+def select_apply_queue(
+    database_path: Path,
+    *,
+    limit: int | None = None,
+    ingest_batch_id: str | None = None,
+) -> tuple[QueuedJob, ...]:
+    ranked_queued_jobs = select_ranked_apply_queue(
+        database_path,
+        limit=limit,
+        ingest_batch_id=ingest_batch_id,
+    )
     return tuple(
         QueuedJob(
             rank=queued_job.rank,
@@ -91,6 +107,8 @@ def _queue_reason_summary(job: ScoredJob) -> str:
         parts.append(f"geo={job.geography_bucket}")
     if job.source_score > 0 and job.source_category != "unclassified":
         parts.append(f"source={job.source_category}")
+    if job.actionability_score < 0:
+        parts.append("launch=missing apply_url")
     if parts:
         return "; ".join(parts)
     return "no strong score signals yet"

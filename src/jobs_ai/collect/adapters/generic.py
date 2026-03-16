@@ -58,9 +58,18 @@ def _manual_review_reason(
     detected_patterns: tuple[str, ...],
 ) -> tuple[str, str, str]:
     if source.portal_type == "workday":
+        requisition_hint = _workday_requisition_hint(source)
+        reason = (
+            "Accessible Workday HTML was fetched, but automatic collection is intentionally unsupported; manual review required."
+        )
+        if requisition_hint is not None:
+            reason = (
+                "Accessible Workday HTML was fetched for "
+                f"{requisition_hint}, but automatic collection is intentionally unsupported; manual review required."
+            )
         return (
             "workday_manual_review",
-            "Accessible Workday HTML was fetched, but automatic collection is intentionally unsupported; manual review required.",
+            reason,
             "Open the Workday page manually and capture company, title, location, and apply URL into leads.import.json.",
         )
 
@@ -84,3 +93,14 @@ def _manual_review_reason(
         "Accessible HTML was fetched, but no supported automatic collector matched this source; manual review required.",
         "Confirm the page is a real job posting, then copy company, title, location, and apply URL into leads.import.json manually.",
     )
+
+
+def _workday_requisition_hint(source: SourceInput) -> str | None:
+    if source.portal_support is None:
+        return None
+    for hint in source.portal_support.hints:
+        prefix = "Workday requisition hint: "
+        if not hint.startswith(prefix):
+            continue
+        return hint.removeprefix(prefix).rstrip(".")
+    return None

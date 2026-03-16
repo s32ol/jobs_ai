@@ -218,6 +218,107 @@ class CollectTest(unittest.TestCase):
             ("job_posting_json_ld", "careers_keyword", "apply_keyword", "job_detail_keyword"),
         )
 
+    def test_run_collection_surfaces_workday_manual_review_with_context_hints(self) -> None:
+        source_url = (
+            "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Remote-USA/Data-Engineer_R12345?source=linkedin"
+        )
+        html_text = """
+<!doctype html>
+<html>
+  <head>
+    <title>Workday Careers | Data Engineer</title>
+  </head>
+  <body>
+    <main>
+      <h1>Data Engineer</h1>
+      <p>Workday powered application page</p>
+      <a href="/apply">Apply now</a>
+    </main>
+  </body>
+</html>
+""".strip()
+
+        def fetcher(request: FetchRequest) -> FetchResponse:
+            self.assertEqual(
+                request.url,
+                "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Remote-USA/Data-Engineer_R12345",
+            )
+            return FetchResponse(
+                url=request.url,
+                final_url=request.url,
+                status_code=200,
+                content_type="text/html; charset=utf-8",
+                text=html_text,
+            )
+
+        run = run_collection(
+            [source_url],
+            timeout_seconds=10.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(run.report.collected_count, 0)
+        self.assertEqual(run.report.manual_review_count, 1)
+        result = run.report.source_results[0]
+        self.assertEqual(result.outcome, "manual_review")
+        self.assertEqual(result.reason_code, "workday_manual_review")
+        self.assertIn("R12345", result.reason)
+        assert result.manual_review_item is not None
+        self.assertEqual(result.manual_review_item.portal_type, "workday")
+        self.assertIn("Workday tenant hint: acme.", result.manual_review_item.hints)
+        self.assertIn("Workday site hint: External.", result.manual_review_item.hints)
+        self.assertIn("Workday requisition hint: R12345.", result.manual_review_item.hints)
+
+    def test_run_collection_routes_workday_source_to_manual_review_with_normalized_url(self) -> None:
+        source_url = (
+            "https://wd5.myworkdayjobs.com/en-US/Company/job/Title-ID/apply"
+            "?source=linkedin&utm_campaign=spring#top"
+        )
+        normalized_url = "https://wd5.myworkdayjobs.com/en-US/Company/job/Title-ID"
+        html_text = """
+<!doctype html>
+<html>
+  <head>
+    <title>Workday | Platform Data Engineer</title>
+  </head>
+  <body>
+    <main>
+      <h1>Platform Data Engineer</h1>
+      <p>Job description</p>
+      <a href="/apply">Apply now</a>
+    </main>
+  </body>
+</html>
+""".strip()
+
+        def fetcher(request: FetchRequest) -> FetchResponse:
+            self.assertEqual(request.url, normalized_url)
+            return FetchResponse(
+                url=request.url,
+                final_url=request.url,
+                status_code=200,
+                content_type="text/html; charset=utf-8",
+                text=html_text,
+            )
+
+        run = run_collection(
+            [source_url],
+            timeout_seconds=10.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(run.report.collected_count, 0)
+        self.assertEqual(run.report.manual_review_count, 1)
+        result = run.report.source_results[0]
+        self.assertEqual(result.outcome, "manual_review")
+        self.assertEqual(result.source.portal_type, "workday")
+        self.assertEqual(result.source.normalized_url, normalized_url)
+        self.assertEqual(result.reason_code, "workday_manual_review")
+        assert result.manual_review_item is not None
+        self.assertEqual(result.manual_review_item.normalized_url, normalized_url)
+
     def test_run_collection_skips_invalid_and_duplicate_sources(self) -> None:
         run = run_collection(
             [
