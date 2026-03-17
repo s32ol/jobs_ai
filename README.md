@@ -1,336 +1,194 @@
 # jobs_ai
 
-`jobs_ai` is a local, operator-driven CLI for running a disciplined job-search pipeline from ATS discovery through manual application tracking.
+A Python-first job search automation toolkit that discovers ATS job sources, collects postings, ranks opportunities, and prepares clean application sessions without becoming a blind auto-apply bot.
 
-It is built for a real human operator, not for blind auto-apply. The goal is to keep sourcing, dedupe, ranking, session scope, launch prep, and outcome tracking deterministic while leaving the risky submission steps manual and visible.
+## Why this exists
 
-## What It Solves
+Technical job searches usually break down in familiar ways: job sources are scattered across different portals, the same opening shows up multiple times, browser tabs turn into an unmanageable working set, resume targeting gets inconsistent from one application to the next, and manual follow-up tracking falls behind once applications are in flight.
 
-Job searches usually break down in the same places:
+`jobs_ai` is built to keep that process local, structured, and reviewable. It discovers ATS job sources, collects and normalizes jobs from supported portals, imports leads into SQLite, ranks the queue, prepares deterministic session manifests, suggests resume and profile variants, and tracks manual outcomes after real applications happen.
 
-- leads come from multiple portals and duplicate easily
-- ad hoc browser sessions lose the working set
-- resume and profile choices drift across tabs
-- older `new` jobs bleed into today's sprint
-- manual tracking falls behind what actually happened
+## What makes it different
 
-`jobs_ai` addresses that with a local SQLite-backed workflow that supports:
+- ATS-first instead of scraping everything blindly
+- deterministic local workflow
+- human-in-the-loop by design
+- scoped session batches
+- ranking + resume recommendations included
 
-- ATS-first discovery and collection
-- deterministic import and dedupe
-- lightweight scoring and queueing
-- scoped session manifests for daily application batches
-- portal hints and read-only launch planning
-- manual status tracking and compact analytics
+## Core Features
 
-## Operator Positioning
+### ATS Discovery Engine
 
-This repository is now shaped around an operator-ready daily path:
+- Search-driven discovery of job board roots
+- Supports Greenhouse, Lever, and Ashby discovery paths
+- Surfaces unsupported/manual-review results separately
 
-```bash
-jobs-ai run "python backend engineer remote" --limit 25 --open
-```
+### Structured ATS Collectors
 
-That unified command drives:
+- Native collectors for Greenhouse, Lever, and Ashby
+- Produces importer-ready leads
+- Handles normalization and portal-specific parsing
+
+### Company-First Source Seeding
+
+- Seed likely ATS board roots from company names/domains
+- Confirm reusable sources
+- Useful for building a reusable source registry
+
+### Ranked Application Queue
+
+- Scores jobs before action
+- Uses title, stack, geography, and source signals
+- Produces a focused working set
+
+### Resume Recommendation Layer
+
+- Suggests best-fit resume/profile snippets
+- Covers data engineering, analytics engineering, and observability/telemetry paths
+
+### Session-Based Workflow
+
+- Freeze deterministic application batches
+- Export, inspect, and reopen manifests
+- Mark outcomes after manual apply work
+
+### Manual Tracking and Stats
+
+- Track opened, applied, interview, rejected, offer, etc.
+- Review recent sessions and throughput
+
+## High-Level Workflow
 
 ```text
-discover -> collect -> import -> session start
+discover -> collect -> import -> rank -> session start -> manual apply -> track -> stats
 ```
 
-It writes a durable manifest for the selected batch, can optionally open launchable URLs with the safe browser executor, and keeps the session scoped to the jobs imported by that run.
-
-The older manual staircase is still present for inspection-heavy workflows, but it is no longer the primary operator path.
+The automation handles sourcing, dedupe, ranking, and session prep. The human handles final submission, edge cases, and judgment calls.
 
 ## Quick Start
 
-Create a venv and install the repo in editable mode:
-
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
-```
 
-Optional local config:
-
-```bash
-cp .env.example .env
-```
-
-Initialize the workspace and database:
-
-```bash
 jobs-ai init
-jobs-ai doctor
 jobs-ai db init
-jobs-ai db status
+jobs-ai run "python backend engineer remote" --limit 25
 ```
 
-Minimal local workflow using the bundled sample leads:
+## Main Commands
+
+### `jobs-ai run`
+
+Preferred daily path: discover sources, collect jobs, import them, and freeze one session.
 
 ```bash
-jobs-ai import data/raw/sample_job_leads.json
-jobs-ai session start --limit 5
+jobs-ai run "python backend engineer remote" --limit 25
+```
+
+### `jobs-ai discover`
+
+Search for ATS-backed sources from a query and optionally carry them into later stages.
+
+```bash
+jobs-ai discover "data engineer remote" --collect --import
+```
+
+### `jobs-ai collect`
+
+Collect jobs from known ATS sources.
+
+```bash
+jobs-ai collect https://boards.greenhouse.io/example https://jobs.lever.co/example
+```
+
+### `jobs-ai seed-sources`
+
+Infer likely ATS board roots from company names or domains.
+
+```bash
+jobs-ai seed-sources "Example Company | example.com"
+```
+
+### `jobs-ai session start`
+
+Freeze a ranked application batch into a durable manifest.
+
+```bash
+jobs-ai session start --limit 20
+```
+
+### `jobs-ai session recent`
+
+Review recently created session manifests.
+
+```bash
 jobs-ai session recent
-jobs-ai stats --days 7
 ```
 
-Daily operator workflow from live ATS discovery:
+### `jobs-ai session inspect`
+
+Inspect a past session by recorded session id or manifest path.
 
 ```bash
-jobs-ai run "python backend engineer remote" --limit 25 --open --portal-hints
-jobs-ai session mark opened --manifest data/processed/<run-dir>/launch-preview-session-<timestamp>.json --all
+jobs-ai session inspect 1
+```
+
+### `jobs-ai session mark`
+
+Record outcomes for jobs from a session.
+
+```bash
+jobs-ai session mark applied --manifest data/exports/<session-manifest>.json --all
+```
+
+### `jobs-ai track list`
+
+List current tracked statuses, optionally filtered by status.
+
+```bash
 jobs-ai track list --status opened
-jobs-ai stats --days 7
 ```
 
-After installation, `jobs-ai` is the preferred operator-facing entrypoint. `python -m jobs_ai ...` is also supported.
+### `jobs-ai stats`
 
-## Installation
-
-The canonical local install path is:
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
-```
-
-Useful first checks:
-
-```bash
-jobs-ai --help
-jobs-ai status
-```
-
-Environment knobs from `.env.example`:
-
-- `JOBS_AI_ENV`
-- `JOBS_AI_PROFILE`
-- `JOBS_AI_DB_PATH`
-- optional resume path overrides such as `JOBS_AI_RESUME_DATA_ENGINEERING_PATH`
-
-## Primary Operator Workflow
-
-`jobs-ai run` is the preferred daily command for a live search sprint.
-
-Example:
-
-```bash
-jobs-ai run "python backend engineer remote" --limit 25 --open
-```
-
-What it does:
-
-- discovers likely ATS sources for the query
-- collects supported sources into importer-ready leads
-- imports those leads into the local SQLite database
-- freezes one scoped session manifest from that run's imported jobs
-- optionally opens launchable application URLs using the selected executor
-
-Useful options:
-
-- `--discover-limit` caps how many ATS candidates are verified during discovery
-- `--collect-limit` caps how many confirmed sources move into collection
-- `--portal-hints` prints portal detection and normalization details when available
-- `--open` reuses the current safe browser-open behavior after the session is frozen
-- `--executor noop|browser_stub` controls whether launch actions are simulated or opened
-- `--label` and `--out-dir` make run artifacts easier to organize
-- `--json` prints the final run summary as JSON
-
-After the run, the operator still performs the actual application steps manually, then records outcomes with `session mark` or `track`.
-
-## Modular Workflow
-
-If you want more control over each handoff, the repo supports a modular operator flow.
-
-### 1. Discover Or Collect
-
-`jobs-ai discover` starts from a search query and is the high-level upstream helper.
-
-Example:
-
-```bash
-jobs-ai discover "data engineer remote"
-jobs-ai discover "backend engineer remote" --collect --import
-```
-
-Artifacts written by `discover`:
-
-- `discover_report.json`
-- `confirmed_sources.txt`
-- `manual_review_sources.json`
-
-`jobs-ai collect` is the lower-level collector when you already know the source URLs.
-
-Example:
-
-```bash
-jobs-ai collect https://boards.greenhouse.io/acme https://jobs.lever.co/northwind
-jobs-ai collect --from-file sources.txt
-```
-
-Artifacts written by `collect`:
-
-- `run_report.json`
-- `leads.import.json`
-- `manual_review.json`
-
-`jobs-ai seed-sources` is the company-first helper for inferring likely ATS board roots from company names or domains.
-
-### 2. Import
-
-Use `jobs-ai import` for importer-shaped JSON, including the leads produced by `collect`.
-
-```bash
-jobs-ai import data/raw/sample_job_leads.json
-jobs-ai import data/processed/<collect-run>/leads.import.json --batch-id morning-batch
-```
-
-The importer performs:
-
-- required-field validation
-- lightweight normalization
-- canonical URL and identity-based dedupe
-- optional batch tagging for later session scoping
-
-### 3. Queue And Recommend
-
-These commands are still available for inspection-heavy workflows:
-
-```bash
-jobs-ai score
-jobs-ai queue --limit 10
-jobs-ai recommend --limit 10
-```
-
-- `score` applies rule-based ranking to the stored jobs
-- `queue` shows the top ranked jobs whose current status is `new`
-- `recommend` attaches resume/profile suggestions to the current queue
-
-### 4. Preview And Export A Session
-
-The advanced manual path remains available:
-
-```bash
-jobs-ai launch-preview --limit 10 --portal-hints
-jobs-ai export-session --limit 10
-```
-
-- `launch-preview` is read-only and shows the launchable working set
-- `export-session` writes a JSON manifest for the current preview set
-
-For most day-to-day work, `jobs-ai session start` is the better modular command because it freezes and exports the same batch immediately.
-
-### 5. Freeze A Session
-
-`jobs-ai session start` is the preferred modular batch-freeze command.
-
-```bash
-jobs-ai session start --limit 10
-jobs-ai session start --batch-id discover-morning-20260315T101500Z --limit 10 --open
-```
-
-It can:
-
-- select the top ranked `new` jobs
-- scope the session to one import or discover batch with `--batch-id`
-- attach resume recommendations
-- include portal hint details
-- export the exact selected batch to a manifest
-- optionally open launchable URLs with `--open`
-
-Session history utilities:
-
-```bash
-jobs-ai session recent
-jobs-ai session inspect 12
-jobs-ai session reopen 12
-```
-
-### 6. Preflight, Launch Planning, And Assist
-
-These commands operate on an exported session manifest:
-
-```bash
-jobs-ai preflight data/exports/launch-preview-session-<timestamp>.json
-jobs-ai launch-plan data/exports/launch-preview-session-<timestamp>.json
-jobs-ai application-assist data/exports/launch-preview-session-<timestamp>.json --portal-hints
-jobs-ai launch-dry-run data/exports/launch-preview-session-<timestamp>.json --executor noop
-```
-
-- `preflight` validates the manifest payload
-- `launch-plan` identifies which manifest items are launchable
-- `application-assist` shows read-only resume/profile guidance
-- `launch-dry-run` prints the launch sequence and can optionally open tabs via `browser_stub`
-
-### 7. Manual Apply And Tracking
-
-Actual submission remains manual. After opening or applying, record what happened:
-
-```bash
-jobs-ai session mark opened --manifest data/exports/launch-preview-session-<timestamp>.json --all
-jobs-ai session mark applied --manifest data/exports/launch-preview-session-<timestamp>.json --index 1
-jobs-ai track mark 42 interview
-jobs-ai track list --status applied
-jobs-ai track status 42
-```
-
-Supported tracking states include:
-
-- `new`
-- `opened`
-- `applied`
-- `recruiter_screen`
-- `assessment`
-- `interview`
-- `offer`
-- `rejected`
-- `skipped`
-
-### 8. Stats And Maintenance
+Show recent throughput and application activity.
 
 ```bash
 jobs-ai stats --days 7
-jobs-ai stats --json
-jobs-ai maintenance backfill --dry-run
 ```
 
-- `stats` summarizes jobs, status distribution, recent imports, sessions, and portal counts
-- `maintenance backfill` upgrades older rows with newer derived metadata without rewriting history
+## Architecture Snapshot
 
-## Supported ATS Portals
+- `src/jobs_ai/discover`: search-planned ATS discovery, verification, and manual-review reporting
+- `src/jobs_ai/collect`: portal-specific collection adapters and artifact writers for importer-ready leads
+- `src/jobs_ai/jobs`: normalization, dedupe identity, import, scoring, filtering, and queue selection
+- `src/jobs_ai/resume`: resume variant resolution and recommendation logic for ranked jobs
+- `src/jobs_ai/application_tracking.py`: status transitions and timeline reads for manual application tracking
+- Session-related modules: `session_start.py`, `session_manifest.py`, `session_export.py`, `session_history.py`, `session_mark.py`, `launch_plan.py`, and `launch_preview.py`
+- Source seeding and registry workflows live in `src/jobs_ai/source_seed` and `src/jobs_ai/sources`
 
-Current portal handling is:
+## Design Philosophy
 
-- Greenhouse: supported for source discovery, structured collection, direct-job normalization, portal hints, and company-scoped apply links when available.
-- Lever: supported for source discovery, structured collection, normalization, and portal hints.
-- Ashby: supported for source discovery, structured collection, normalization, and portal hints.
-- Workday: detected and normalized for manual review and portal hints, but not auto-confirmed into `confirmed_sources.txt` and not collected into structured importer-ready leads.
+- local-first
+- deterministic
+- human-in-the-loop
+- no blind auto-apply
+- safe launch behavior
 
-In practice, that means Greenhouse, Lever, and Ashby are the structured ATS intake path today. Workday remains operator-assisted.
+## Current Limitations
 
-## Known Limitations
+- not a form submission bot
+- depends on public ATS structure
+- Workday is still more manual
+- browser automation is intentionally limited
 
-- This is not an auto-apply bot. Real form submission is intentionally manual.
-- `discover` and `collect` depend on live network access and on public ATS pages exposing enough structure to parse safely.
-- Workday support is partial by design: detection and hints are present, but structured automatic collection is not.
-- Browser opening is limited to the current safe launch executor modes: `noop` and `browser_stub`.
-- Resume resolution depends on local file paths or environment configuration; if a variant cannot be resolved, the CLI falls back to summary guidance instead of inventing a file.
-- The advanced manual staircase (`score -> queue -> recommend -> launch-preview -> export-session`) is available, but `session start` is the safer way to freeze a deterministic batch because it avoids preview/export drift.
+## Future Directions
 
-## Repo Map
-
-- `src/jobs_ai`: package source for the CLI, collectors, importer, queueing, session flow, tracking, and analytics.
-- `tests`: unittest coverage for CLI flows, collectors, importer, session handling, tracking, and analytics.
-- `scripts`: small operational helpers that are not the primary operator entrypoint.
-- `docs`: top-level release notes and operator-facing documentation landing area.
-
-## Development Notes
-
-- The installed console script is `jobs-ai`.
-- The package also supports `python -m jobs_ai`.
-- Workspace artifacts default to `data/`, `sessions/`, and `logs/` under the repo root.
-- The local SQLite database defaults to `data/jobs_ai.db`.
+- stronger source registry workflows
+- richer manual-review and Workday paths
+- better UI/feed layer
+- stronger analytics/exports
