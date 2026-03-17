@@ -10,9 +10,15 @@ if TYPE_CHECKING:
 
 NO_OP_EXECUTOR_MODE = "noop"
 BROWSER_STUB_EXECUTOR_MODE = "browser_stub"
-SUPPORTED_EXECUTOR_MODES = (NO_OP_EXECUTOR_MODE, BROWSER_STUB_EXECUTOR_MODE)
+REMOTE_PRINT_EXECUTOR_MODE = "remote_print"
+SUPPORTED_EXECUTOR_MODES = (
+    NO_OP_EXECUTOR_MODE,
+    BROWSER_STUB_EXECUTOR_MODE,
+    REMOTE_PRINT_EXECUTOR_MODE,
+)
 NO_OP_EXECUTION_STATUS = "noop"
 OPENED_EXECUTION_STATUS = "opened"
+PRINTED_EXECUTION_STATUS = "printed"
 SKIPPED_MISSING_URL_EXECUTION_STATUS = "skipped_missing_url"
 
 
@@ -68,11 +74,38 @@ class BrowserLaunchExecutor:
         return report
 
 
+class RemotePrintLaunchExecutor:
+    def __init__(self) -> None:
+        self.reported_actions: list[LaunchExecutionReport] = []
+
+    def execute_step(self, step: LaunchDryRunStep) -> LaunchExecutionReport:
+        normalized_url = _normalize_launch_url(step.apply_url)
+        if normalized_url is None:
+            report = _build_execution_report(
+                step,
+                executor_mode=REMOTE_PRINT_EXECUTOR_MODE,
+                status=SKIPPED_MISSING_URL_EXECUTION_STATUS,
+            )
+            self.reported_actions.append(report)
+            return report
+
+        report = _build_execution_report(
+            step,
+            executor_mode=REMOTE_PRINT_EXECUTOR_MODE,
+            status=PRINTED_EXECUTION_STATUS,
+            apply_url=normalized_url,
+        )
+        self.reported_actions.append(report)
+        return report
+
+
 def select_launch_executor(mode: str = NO_OP_EXECUTOR_MODE) -> LaunchStepExecutor:
     if mode == NO_OP_EXECUTOR_MODE:
         return NoOpLaunchExecutor()
     if mode == BROWSER_STUB_EXECUTOR_MODE:
         return BrowserLaunchExecutor()
+    if mode == REMOTE_PRINT_EXECUTOR_MODE:
+        return RemotePrintLaunchExecutor()
     supported = ", ".join(SUPPORTED_EXECUTOR_MODES)
     raise ValueError(f"unsupported launch executor mode: {mode}; expected one of: {supported}")
 

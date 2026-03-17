@@ -460,6 +460,53 @@ class SessionStartTest(unittest.TestCase):
             self.assertIn("open executor: noop", result.stdout)
             self.assertIn("dry run only: 1", result.stdout)
 
+    def test_cli_session_start_open_with_remote_print_lists_targets_without_opening_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                _insert_job_with_status(
+                    connection,
+                    source="staffing recruiter",
+                    company="Northwind Talent",
+                    title="Platform Data Engineer",
+                    location="Remote",
+                    raw_payload={"description": "Python BigQuery GCP contract"},
+                    apply_url=" https://agency.example/jobs/2 ",
+                )
+                _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Bright Metrics",
+                    title="Data Engineer",
+                    location="Remote",
+                    raw_payload={"description": "Python pipelines"},
+                    apply_url="https://jobs.example.com/3",
+                )
+                connection.commit()
+
+            with patch("jobs_ai.workspace.discover_project_root", return_value=project_root):
+                with patch("jobs_ai.launch_executor.webbrowser.open") as open_browser:
+                    result = RUNNER.invoke(
+                        app,
+                        ["session", "start", "--limit", "2", "--open", "--executor", "remote_print"],
+                        env=env,
+                    )
+
+            self.assertEqual(result.exit_code, 0)
+            open_browser.assert_not_called()
+            self.assertIn("open executor: remote_print", result.stdout)
+            self.assertIn("printed urls: 2", result.stdout)
+            self.assertIn("skipped missing url: 0", result.stdout)
+            self.assertIn("remote launch targets:", result.stdout)
+            self.assertIn("1. Northwind Talent | Platform Data Engineer", result.stdout)
+            self.assertIn("apply_url: https://agency.example/jobs/2", result.stdout)
+            self.assertIn("2. Bright Metrics | Data Engineer", result.stdout)
+            self.assertIn("apply_url: https://jobs.example.com/3", result.stdout)
+
     def test_cli_session_start_out_dir_and_label_customize_artifact_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             project_root = Path(tmp_dir) / "workspace"

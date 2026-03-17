@@ -551,6 +551,14 @@ def open_command(
         "--index",
         help="1-based manifest index to open.",
     ),
+    executor: str = typer.Option(
+        BROWSER_STUB_EXECUTOR_MODE,
+        "--executor",
+        help=(
+            "Launch executor mode for opening one manifest item. Allowed values: "
+            f"{', '.join(SUPPORTED_EXECUTOR_MODES)}."
+        ),
+    ),
 ) -> None:
     """Open one manifest item's apply URL, then optionally record applied/skipped."""
     settings, paths = _load_runtime()
@@ -558,7 +566,11 @@ def open_command(
     ensure_workspace(paths)
     initialize_schema(paths.database_path)
     try:
-        open_result = open_manifest_item(manifest, index=index)
+        open_result = open_manifest_item(
+            manifest,
+            index=index,
+            executor_mode=executor,
+        )
     except ValueError as exc:
         typer.echo(render_open_error_report(paths, manifest, str(exc)))
         raise typer.Exit(code=1)
@@ -2279,3 +2291,7 @@ def run(argv: Sequence[str] | None = None) -> int:
 
 
 main = run
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())

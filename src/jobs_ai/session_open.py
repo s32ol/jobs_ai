@@ -33,6 +33,7 @@ def open_manifest_item(
     manifest_path: Path,
     *,
     index: int,
+    executor_mode: str = BROWSER_STUB_EXECUTOR_MODE,
 ) -> SessionOpenResult:
     manifest = load_session_manifest(manifest_path)
     resolved_index = _require_manifest_index(index)
@@ -45,7 +46,7 @@ def open_manifest_item(
     if selected_item.apply_url is None:
         raise ValueError(f"manifest index {resolved_index} is missing apply_url")
 
-    execution_report = select_launch_executor(BROWSER_STUB_EXECUTOR_MODE).execute_step(
+    execution_report = select_launch_executor(executor_mode).execute_step(
         _ManifestOpenStep(
             launch_order=selected_item.index,
             action_label=OPEN_URL_ACTION,

@@ -274,6 +274,66 @@ class SessionHistoryCommandsTest(unittest.TestCase):
             self.assertIn("opened in browser: 1", result.stdout)
             open_browser.assert_called_once_with("https://example.com/jobs/1", new=2)
 
+    def test_cli_session_reopen_remote_print_lists_targets_without_opening_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                launchable_job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Northwind Talent",
+                        title="Platform Data Engineer",
+                        location="Remote",
+                        apply_url=" https://example.com/jobs/1 ",
+                    ),
+                )
+                skipped_job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Contoso",
+                        title="Analytics Engineer",
+                        location="Remote",
+                        apply_url="https://example.com/jobs/2",
+                    ),
+                )
+                connection.commit()
+
+            manifest_path = _write_manifest(
+                project_root / "data" / "exports" / "retro-session.json",
+                launchable_job_id=launchable_job_id,
+                skipped_job_id=skipped_job_id,
+            )
+            session_id = record_session_history(
+                database_path,
+                manifest_path=manifest_path,
+                item_count=2,
+                launchable_count=1,
+                batch_id="discover-batch-1",
+                source_query="platform data engineer remote",
+                created_at="2026-03-15T12:00:00Z",
+            )
+
+            with patch("jobs_ai.launch_executor.webbrowser.open") as open_browser:
+                result = RUNNER.invoke(
+                    app,
+                    ["session", "reopen", str(session_id), "--executor", "remote_print"],
+                    env=env,
+                )
+
+            self.assertEqual(result.exit_code, 0)
+            open_browser.assert_not_called()
+            self.assertIn("executor mode: remote_print", result.stdout)
+            self.assertIn("printed urls: 1", result.stdout)
+            self.assertIn("remote launch targets:", result.stdout)
+            self.assertIn("1. Northwind Talent | Platform Data Engineer", result.stdout)
+            self.assertIn("apply_url: https://example.com/jobs/1", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

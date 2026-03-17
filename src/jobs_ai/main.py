@@ -20,7 +20,14 @@ from .application_prefill import ApplicationPrefillResult
 from .config import GEOGRAPHY_PRIORITY, SEARCH_PRIORITY, TARGET_ROLES, Settings
 from .db import REQUIRED_TABLES, SessionHistoryEntry
 from .launch_dry_run import LaunchDryRunStep
-from .launch_executor import LaunchExecutionReport
+from .launch_executor import (
+    LaunchExecutionReport,
+    NO_OP_EXECUTION_STATUS,
+    OPENED_EXECUTION_STATUS,
+    PRINTED_EXECUTION_STATUS,
+    REMOTE_PRINT_EXECUTOR_MODE,
+    SKIPPED_MISSING_URL_EXECUTION_STATUS,
+)
 from .maintenance import BackfillResult
 from .jobs.importer import JobImportResult
 from .jobs.fast_apply import FastApplySelection
@@ -1756,6 +1763,22 @@ def render_fast_apply_report(
             scope_lines.append(f"source query: {result.selection_scope.source_query}")
         scope_lines.extend(_selection_scope_detail_lines(result.selection_scope))
         lines[insert_at:insert_at] = scope_lines
+    if result.open_requested:
+        executor_mode = result.executor_mode or "browser_stub"
+        lines.append(f"open executor: {executor_mode}")
+        lines.append(f"open actions: {len(result.execution_reports)}")
+        lines.extend(
+            _render_launch_execution_count_lines(
+                result.execution_reports,
+                executor_mode=executor_mode,
+            )
+        )
+        lines.extend(
+            _render_remote_launch_targets_lines(
+                result.execution_reports,
+                executor_mode=executor_mode,
+            )
+        )
 
     if not selections:
         _append_guidance(
@@ -1876,17 +1899,18 @@ def render_session_start_report(
         assert result.executor_mode is not None
         lines.append(f"open executor: {result.executor_mode}")
         lines.append(f"open actions: {len(result.execution_reports)}")
-        if result.execution_reports:
-            lines.append(
-                f"opened in browser: {_count_launch_execution_status(result.execution_reports, 'opened')}"
+        lines.extend(
+            _render_launch_execution_count_lines(
+                result.execution_reports,
+                executor_mode=result.executor_mode,
             )
-            lines.append(
-                f"dry run only: {_count_launch_execution_status(result.execution_reports, 'noop')}"
+        )
+        lines.extend(
+            _render_remote_launch_targets_lines(
+                result.execution_reports,
+                executor_mode=result.executor_mode,
             )
-            lines.append(
-                "skipped missing url: "
-                f"{_count_launch_execution_status(result.execution_reports, 'skipped_missing_url')}"
-            )
+        )
 
     if not result.items:
         _append_guidance(
@@ -2070,13 +2094,20 @@ def render_session_reopen_report(
         f"executor mode: {result.executor_mode}",
         f"launchable items: {result.plan.launchable_items}",
         f"reopen actions: {len(result.execution_reports)}",
-        f"opened in browser: {_count_launch_execution_status(result.execution_reports, 'opened')}",
-        f"dry run only: {_count_launch_execution_status(result.execution_reports, 'noop')}",
-        f"skipped missing url: {_count_launch_execution_status(result.execution_reports, 'skipped_missing_url')}",
         f"status: {'no launchable items to reopen' if not result.execution_reports else 'success'}",
     ]
+    lines[6:6] = _render_launch_execution_count_lines(
+        result.execution_reports,
+        executor_mode=result.executor_mode,
+    )
     if result.resolved.session_history_entry is not None:
         lines.insert(2, f"session id: {result.resolved.session_history_entry.session_id}")
+    lines.extend(
+        _render_remote_launch_targets_lines(
+            result.execution_reports,
+            executor_mode=result.executor_mode,
+        )
+    )
     _append_guidance(
         lines,
         "next:",
@@ -2101,13 +2132,17 @@ def render_session_reopen_error_report(paths: WorkspacePaths, error: str) -> str
 
 def render_open_prompt(result: SessionOpenResult) -> str:
     item = result.selected_item
-    return "\n".join(
+    lines = [
+        (
+            f"{_open_prompt_action_label(result.execution_report.status)}: [{item.index}] "
+            f"{_format_launch_dry_run_text(item.company, fallback='<missing company>')} - "
+            f"{_format_launch_dry_run_text(item.title, fallback='<missing role title>')}"
+        )
+    ]
+    if result.execution_report.status != OPENED_EXECUTION_STATUS:
+        lines.append(f"apply_url: {_format_launch_dry_run_url(result.execution_report.apply_url)}")
+    lines.extend(
         [
-            (
-                f"Opened: [{item.index}] "
-                f"{_format_launch_dry_run_text(item.company, fallback='<missing company>')} - "
-                f"{_format_launch_dry_run_text(item.title, fallback='<missing role title>')}"
-            ),
             "What happened?",
             "[y] applied",
             "[s] skipped",
@@ -2115,6 +2150,7 @@ def render_open_prompt(result: SessionOpenResult) -> str:
             "[q] quit",
         ]
     )
+    return "\n".join(lines)
 
 
 def render_open_unchanged_report(result: SessionOpenResult) -> str:
@@ -2180,7 +2216,21 @@ def render_run_report(
             insert_at = 6 if result.label is not None else 5
             lines[insert_at:insert_at] = scope_lines
         if result.open_requested:
-            lines.append(f"open executor: {result.executor_mode or 'browser_stub'}")
+            executor_mode = result.executor_mode or "browser_stub"
+            lines.append(f"open executor: {executor_mode}")
+            lines.append(f"open actions: {len(result.session_result.execution_reports)}")
+            lines.extend(
+                _render_launch_execution_count_lines(
+                    result.session_result.execution_reports,
+                    executor_mode=executor_mode,
+                )
+            )
+            lines.extend(
+                _render_remote_launch_targets_lines(
+                    result.session_result.execution_reports,
+                    executor_mode=executor_mode,
+                )
+            )
         if result.import_result is not None and result.import_result.errors:
             lines.append("import errors:")
             lines.extend(f"- {error}" for error in result.import_result.errors)
@@ -2245,7 +2295,21 @@ def render_run_report(
         insert_at = 5 if result.label is not None else 4
         lines[insert_at:insert_at] = scope_lines
     if result.open_requested:
-        lines.append(f"open executor: {result.executor_mode or 'browser_stub'}")
+        executor_mode = result.executor_mode or "browser_stub"
+        lines.append(f"open executor: {executor_mode}")
+        lines.append(f"open actions: {len(result.session_result.execution_reports)}")
+        lines.extend(
+            _render_launch_execution_count_lines(
+                result.session_result.execution_reports,
+                executor_mode=executor_mode,
+            )
+        )
+        lines.extend(
+            _render_remote_launch_targets_lines(
+                result.session_result.execution_reports,
+                executor_mode=executor_mode,
+            )
+        )
     if result.discover_run.report.has_search_failures:
         issue_count = sum(
             1
@@ -2901,11 +2965,13 @@ def render_launch_dry_run_error_report(manifest_path: Path, error: str) -> str:
 
 
 def _format_launch_execution_status(value: str) -> str:
-    if value == "opened":
+    if value == OPENED_EXECUTION_STATUS:
         return "opened in browser"
-    if value == "noop":
+    if value == PRINTED_EXECUTION_STATUS:
+        return "printed"
+    if value == NO_OP_EXECUTION_STATUS:
         return "dry run only"
-    if value == "skipped_missing_url":
+    if value == SKIPPED_MISSING_URL_EXECUTION_STATUS:
         return "skipped (missing URL)"
     return value.replace("_", " ")
 
@@ -2930,7 +2996,74 @@ def _count_launch_execution_status(
 
 
 def _reports_include_opened(reports: Sequence[LaunchExecutionReport]) -> bool:
-    return any(report.status == "opened" for report in reports)
+    return any(report.status == OPENED_EXECUTION_STATUS for report in reports)
+
+
+def _render_launch_execution_count_lines(
+    reports: Sequence[LaunchExecutionReport],
+    *,
+    executor_mode: str,
+) -> list[str]:
+    if not reports:
+        return []
+
+    primary_label = "opened in browser"
+    primary_status = OPENED_EXECUTION_STATUS
+    if executor_mode == REMOTE_PRINT_EXECUTOR_MODE:
+        primary_label = "printed urls"
+        primary_status = PRINTED_EXECUTION_STATUS
+
+    return [
+        f"{primary_label}: {_count_launch_execution_status(reports, primary_status)}",
+        f"dry run only: {_count_launch_execution_status(reports, NO_OP_EXECUTION_STATUS)}",
+        (
+            "skipped missing url: "
+            f"{_count_launch_execution_status(reports, SKIPPED_MISSING_URL_EXECUTION_STATUS)}"
+        ),
+    ]
+
+
+def _render_remote_launch_targets_lines(
+    reports: Sequence[LaunchExecutionReport],
+    *,
+    executor_mode: str,
+) -> list[str]:
+    if executor_mode != REMOTE_PRINT_EXECUTOR_MODE:
+        return []
+
+    printed_reports = [
+        report
+        for report in sorted(reports, key=_launch_dry_run_sort_key)
+        if report.status == PRINTED_EXECUTION_STATUS
+    ]
+    if not printed_reports:
+        return []
+
+    lines = ["", "remote launch targets:"]
+    for index, report in enumerate(printed_reports, start=1):
+        lines.extend(
+            [
+                (
+                    f"{index}. "
+                    f"{_format_launch_dry_run_text(report.company, fallback='<missing company>')} | "
+                    f"{_format_launch_dry_run_text(report.title, fallback='<missing role title>')}"
+                ),
+                f"   apply_url: {_format_launch_dry_run_url(report.apply_url)}",
+            ]
+        )
+    return lines
+
+
+def _open_prompt_action_label(status: str) -> str:
+    if status == OPENED_EXECUTION_STATUS:
+        return "Opened"
+    if status == PRINTED_EXECUTION_STATUS:
+        return "Printed"
+    if status == NO_OP_EXECUTION_STATUS:
+        return "Preview"
+    if status == SKIPPED_MISSING_URL_EXECUTION_STATUS:
+        return "Launch skipped"
+    return status.replace("_", " ").title()
 
 
 def _format_resume_file_line(

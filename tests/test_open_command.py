@@ -210,6 +210,59 @@ class OpenCommandTest(unittest.TestCase):
             self.assertEqual(detail.snapshot.current_status, "new")
             self.assertEqual(detail.history, ())
 
+    def test_cli_open_remote_print_reports_url_without_opening_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Fabrikam",
+                        title="Backend Engineer",
+                        location="Remote",
+                        apply_url=" https://example.com/jobs/3 ",
+                    ),
+                )
+                connection.commit()
+
+            manifest_path = _write_manifest(
+                project_root / "data" / "exports" / "manual-remote-print.json",
+                job_id=job_id,
+                company="Fabrikam",
+                title="Backend Engineer",
+                apply_url=" https://example.com/jobs/3 ",
+            )
+
+            with patch("jobs_ai.launch_executor.webbrowser.open") as open_browser:
+                result = RUNNER.invoke(
+                    app,
+                    [
+                        "open",
+                        "--manifest",
+                        str(manifest_path),
+                        "--index",
+                        "1",
+                        "--executor",
+                        "remote_print",
+                    ],
+                    env=env,
+                    input="\n",
+                )
+
+            self.assertEqual(result.exit_code, 0)
+            open_browser.assert_not_called()
+            self.assertIn("Printed: [1] Fabrikam - Backend Engineer", result.stdout)
+            self.assertIn("apply_url: https://example.com/jobs/3", result.stdout)
+            self.assertIn("Status left unchanged for [1] Fabrikam - Backend Engineer.", result.stdout)
+            detail = get_application_status(database_path, job_id=job_id)
+            self.assertEqual(detail.snapshot.current_status, "new")
+            self.assertEqual(detail.history, ())
+
     def test_cli_open_reports_invalid_manifest_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             project_root = Path(tmp_dir) / "workspace"

@@ -129,6 +129,14 @@ Freeze a ranked application batch into a durable manifest.
 jobs-ai session start --limit 20
 ```
 
+For SSH or tunnel-based workflows, print remote-safe launch targets instead of trying to open a browser on the remote machine:
+
+```bash
+jobs-ai session start --limit 20 --open --executor remote_print
+```
+
+This prints the application URLs to stdout for local clicking/copying while preserving the normal manifest export, dry-run planning, and manual-review flow.
+
 ### `jobs-ai session recent`
 
 Review recently created session manifests.

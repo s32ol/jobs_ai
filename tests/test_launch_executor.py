@@ -26,10 +26,13 @@ from jobs_ai.launch_executor import (
     NO_OP_EXECUTION_STATUS,
     NO_OP_EXECUTOR_MODE,
     OPENED_EXECUTION_STATUS,
+    PRINTED_EXECUTION_STATUS,
+    REMOTE_PRINT_EXECUTOR_MODE,
     SKIPPED_MISSING_URL_EXECUTION_STATUS,
     BrowserLaunchExecutor,
     LaunchStepExecutor,
     NoOpLaunchExecutor,
+    RemotePrintLaunchExecutor,
     collect_launch_execution_reports,
     execute_launch_dry_run,
     select_launch_executor,
@@ -138,11 +141,52 @@ class LaunchExecutorTest(unittest.TestCase):
             ["https://example.com/jobs/1", "https://example.com/jobs/2"],
         )
 
+    def test_remote_print_launch_executor_reports_normalized_url_without_opening_browser(self) -> None:
+        executor = RemotePrintLaunchExecutor()
+        step = _make_step(
+            launch_order=1,
+            company="Northwind Talent",
+            apply_url=" https://example.com/jobs/1 ",
+        )
+
+        with patch("jobs_ai.launch_executor.webbrowser.open") as open_browser:
+            report = executor.execute_step(step)
+
+        self.assertIsInstance(executor, LaunchStepExecutor)
+        open_browser.assert_not_called()
+        self.assertEqual(report.executor_mode, REMOTE_PRINT_EXECUTOR_MODE)
+        self.assertEqual(report.status, PRINTED_EXECUTION_STATUS)
+        self.assertEqual(report.apply_url, "https://example.com/jobs/1")
+        self.assertEqual(executor.reported_actions, [report])
+
+    def test_remote_print_launch_executor_skips_missing_urls_without_opening_browser(self) -> None:
+        dry_run = _make_dry_run(
+            steps=(
+                _make_step(launch_order=1, company="Northwind Talent", apply_url=""),
+                _make_step(launch_order=2, company="Fabrikam", apply_url="   "),
+            )
+        )
+        executor = RemotePrintLaunchExecutor()
+
+        with patch("jobs_ai.launch_executor.webbrowser.open") as open_browser:
+            reports = collect_launch_execution_reports(dry_run, executor)
+
+        open_browser.assert_not_called()
+        self.assertEqual(
+            [report.status for report in reports],
+            [SKIPPED_MISSING_URL_EXECUTION_STATUS] * 2,
+        )
+        self.assertEqual(executor.reported_actions, list(reports))
+
     def test_select_launch_executor_defaults_to_no_op_and_supports_browser_stub(self) -> None:
         self.assertIsInstance(select_launch_executor(), NoOpLaunchExecutor)
         self.assertIsInstance(
             select_launch_executor(BROWSER_STUB_EXECUTOR_MODE),
             BrowserLaunchExecutor,
+        )
+        self.assertIsInstance(
+            select_launch_executor(REMOTE_PRINT_EXECUTOR_MODE),
+            RemotePrintLaunchExecutor,
         )
 
     def test_select_launch_executor_rejects_unknown_mode(self) -> None:

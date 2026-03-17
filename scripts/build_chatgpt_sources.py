@@ -16,6 +16,7 @@ CORE_SOURCE_FILES = [
     Path("src/jobs_ai/jobs/scoring.py"),
     Path("src/jobs_ai/jobs/queue.py"),
     Path("src/jobs_ai/jobs/fast_apply.py"),
+    Path("src/jobs_ai/jobs/importer.py"),
     Path("src/jobs_ai/session_manifest.py"),
     Path("src/jobs_ai/session_start.py"),
     Path("src/jobs_ai/session_mark.py"),
@@ -26,10 +27,13 @@ CORE_SOURCE_FILES = [
     Path("src/jobs_ai/resume/config.py"),
     Path("src/jobs_ai/discover/cli.py"),
     Path("src/jobs_ai/discover/harness.py"),
-    Path("src/jobs_ai/jobs/importer.py"),
     Path("src/jobs_ai/collect/adapters/greenhouse.py"),
     Path("src/jobs_ai/collect/adapters/lever.py"),
     Path("src/jobs_ai/collect/adapters/ashby.py"),
+    Path("src/jobs_ai/collect/cli.py"),
+    Path("src/jobs_ai/collect/harness.py"),
+    Path("src/jobs_ai/portal_support.py"),
+    Path("src/jobs_ai/application_tracking.py"),
 ]
 
 
@@ -76,15 +80,17 @@ def rebuild_bundle(output_dir: Path) -> tuple[list[Path], list[Path]]:
 
 
 def print_summary(output_dir: Path, copied_files: list[Path], missing_files: list[Path]) -> None:
-    print(f"output folder: {output_dir}")
-    print("files copied:")
+    bundle_path = output_dir.relative_to(PROJECT_ROOT).as_posix()
+    print(f"Core source bundle created at: {bundle_path}/")
+    print(f"Total files copied: {len(copied_files)}")
+    print("Copied files:")
     if copied_files:
         for relative_path in copied_files:
             print(f"  - {relative_path.as_posix()}")
     else:
         print("  - none")
 
-    print("missing files:")
+    print("Missing files:")
     if missing_files:
         for relative_path in missing_files:
             print(f"  - {relative_path.as_posix()}")
