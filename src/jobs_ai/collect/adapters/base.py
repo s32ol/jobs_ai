@@ -9,7 +9,14 @@ from typing import Protocol, runtime_checkable
 from urllib.parse import urljoin, urlparse
 
 from ..fetch import FetchRequest, FetchResponse, Fetcher
-from ..models import CollectedLead, ManualReviewItem, OutcomeEvidence, SourceInput, SourceResult
+from ..models import (
+    CensusSourceResult,
+    CollectedLead,
+    ManualReviewItem,
+    OutcomeEvidence,
+    SourceInput,
+    SourceResult,
+)
 
 _ATTR_RE = re.compile(r'([:\w-]+)\s*=\s*(["\'])(.*?)\2', re.IGNORECASE | re.DOTALL)
 _META_RE = re.compile(r"<meta(?P<attrs>[^>]*)>", re.IGNORECASE)
@@ -57,6 +64,7 @@ class CollectionAdapter(Protocol):
 class ParseAttempt:
     leads: tuple[CollectedLead, ...] = ()
     ambiguous_reason: str | None = None
+    recognized_empty: bool = False
 
 
 def fetch_source(
@@ -162,6 +170,51 @@ def finalize_supported_collection(
             reason=f"expected exactly one {portal_label} posting for direct job URL, found {len(leads)}",
         )
     return build_collected_result(source, adapter_key=adapter_key, leads=leads)
+
+
+def finalize_supported_census(
+    source: SourceInput,
+    *,
+    adapter_key: str,
+    parse_attempts: Sequence[ParseAttempt],
+    default_failure_reason: str,
+    evidence: OutcomeEvidence | None = None,
+) -> CensusSourceResult:
+    for attempt in parse_attempts:
+        if attempt.ambiguous_reason is None:
+            continue
+        return build_failed_census_result(
+            source,
+            adapter_key=adapter_key,
+            reason_code=f"{adapter_key}_parse_ambiguous",
+            reason=attempt.ambiguous_reason,
+            evidence=evidence,
+        )
+
+    leads = next((attempt.leads for attempt in parse_attempts if attempt.leads), ())
+    if leads:
+        return build_counted_census_result(
+            source,
+            adapter_key=adapter_key,
+            available_job_count=len(leads),
+            evidence=evidence,
+        )
+
+    if any(attempt.recognized_empty for attempt in parse_attempts):
+        return build_counted_census_result(
+            source,
+            adapter_key=adapter_key,
+            available_job_count=0,
+            evidence=evidence,
+        )
+
+    return build_failed_census_result(
+        source,
+        adapter_key=adapter_key,
+        reason_code=f"{adapter_key}_parse_ambiguous",
+        reason=default_failure_reason,
+        evidence=evidence,
+    )
 
 
 def normalize_text(value: object) -> str | None:
@@ -450,6 +503,46 @@ def build_skipped_result(
         reason_code=reason_code,
         reason=reason,
         suggested_next_action=suggested_next_action,
+        evidence=evidence,
+    )
+
+
+def build_counted_census_result(
+    source: SourceInput,
+    *,
+    adapter_key: str,
+    available_job_count: int,
+    reason_code: str = "counted",
+    reason: str | None = None,
+    evidence: OutcomeEvidence | None = None,
+) -> CensusSourceResult:
+    result_reason = reason or f"counted {available_job_count} posting(s)"
+    return CensusSourceResult(
+        source=source,
+        adapter_key=adapter_key,
+        outcome="counted",
+        available_job_count=available_job_count,
+        reason_code=reason_code,
+        reason=result_reason,
+        evidence=evidence,
+    )
+
+
+def build_failed_census_result(
+    source: SourceInput,
+    *,
+    adapter_key: str,
+    reason_code: str,
+    reason: str,
+    evidence: OutcomeEvidence | None = None,
+) -> CensusSourceResult:
+    return CensusSourceResult(
+        source=source,
+        adapter_key=adapter_key,
+        outcome="failed",
+        available_job_count=None,
+        reason_code=reason_code,
+        reason=reason,
         evidence=evidence,
     )
 

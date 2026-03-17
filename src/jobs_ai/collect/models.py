@@ -7,6 +7,7 @@ from typing import Literal
 from ..portal_support import PortalSupport
 
 CollectionOutcome = Literal["collected", "manual_review", "skipped"]
+CensusOutcome = Literal["counted", "failed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +82,17 @@ class SourceResult:
     evidence: OutcomeEvidence | None = None
     collected_leads: tuple[CollectedLead, ...] = ()
     manual_review_item: ManualReviewItem | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CensusSourceResult:
+    source: SourceInput
+    adapter_key: str
+    outcome: CensusOutcome
+    available_job_count: int | None
+    reason_code: str
+    reason: str
+    evidence: OutcomeEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)

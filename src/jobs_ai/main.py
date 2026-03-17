@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import webbrowser
 
+from .collect.census import BoardCensusRun
 from .collect.models import CollectRunReport
 from .discover.models import DiscoverRun, DiscoverRunReport
 from .source_seed.models import SourceSeedRunReport
@@ -477,6 +478,47 @@ def render_collect_report(report: CollectRunReport) -> str:
     return "\n".join(lines)
 
 
+def render_board_census_report(run: BoardCensusRun) -> str:
+    portal_totals = {total.portal_type: total.job_count for total in run.portal_totals}
+    lines = [
+        f"Boards configured: {run.unique_board_count}",
+        f"Boards counted: {run.counted_board_count}",
+        f"Boards failed: {run.failed_count}",
+        "",
+        "Per-board counts",
+    ]
+    if run.counted_boards:
+        lines.extend(
+            f"{item.portal_label} | {item.board_root_url} | {item.available_job_count}"
+            for item in run.counted_boards
+        )
+    else:
+        lines.append("(none)")
+    lines.append("")
+    if run.failed_boards:
+        lines.append("Failed boards")
+        lines.extend(
+            (
+                f"{item.portal_label} | {(item.board_root_url or item.input_urls[0])} | "
+                f"{item.reason_code} | {item.reason}"
+            )
+            for item in run.failed_boards
+        )
+        lines.append("")
+    lines.extend(
+        [
+            "Portal totals",
+            f"Greenhouse: {portal_totals.get('greenhouse', 0)}",
+            f"Lever: {portal_totals.get('lever', 0)}",
+            f"Ashby: {portal_totals.get('ashby', 0)}",
+            "Workday: not supported in board-census yet",
+            "",
+            f"Grand total: {run.grand_total}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _format_collect_result_line(result) -> str:
     line = f"- {result.source.source_url} | {result.reason_code} | {result.reason}"
     if result.suggested_next_action:
@@ -493,6 +535,19 @@ def render_collect_error_report(error: str) -> str:
             "",
             "next:",
             f"- {_cli_example('collect --from-file sources.txt')}",
+        ]
+    )
+
+
+def render_board_census_error_report(error: str) -> str:
+    return "\n".join(
+        [
+            "jobs_ai board-census",
+            "status: failed",
+            f"error: {error}",
+            "",
+            "next:",
+            f"- {_cli_example('board-census --from-file boards.txt')}",
         ]
     )
 

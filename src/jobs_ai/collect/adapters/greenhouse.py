@@ -4,10 +4,12 @@ import re
 from urllib.parse import urlparse
 
 from ..fetch import FetchError, Fetcher
-from ..models import CollectedLead, OutcomeEvidence, SourceInput, SourceResult
+from ..models import CensusSourceResult, CollectedLead, OutcomeEvidence, SourceInput, SourceResult
 from .base import (
     ParseAttempt,
     build_absolute_url,
+    build_failed_census_result,
+    build_response_evidence,
     build_skipped_result,
     choose_first_text,
     company_from_page_metadata,
@@ -16,6 +18,7 @@ from .base import (
     extract_job_posting_nodes,
     extract_location_text,
     fetch_source,
+    finalize_supported_census,
     finalize_supported_collection,
     inspect_response_for_skip,
     normalize_text,
@@ -96,6 +99,53 @@ class GreenhouseAdapter:
             direct_job_reason_code="greenhouse_direct_job_ambiguous",
         )
 
+    def census(
+        self,
+        source: SourceInput,
+        *,
+        timeout_seconds: float,
+        fetcher: Fetcher,
+    ) -> CensusSourceResult:
+        try:
+            response = fetch_source(source, timeout_seconds=timeout_seconds, fetcher=fetcher)
+        except FetchError as exc:
+            return build_failed_census_result(
+                source,
+                adapter_key=self.adapter_key,
+                reason_code="fetch_failed",
+                reason=str(exc),
+                evidence=OutcomeEvidence(error=str(exc)),
+            )
+
+        skip_result = inspect_response_for_skip(
+            source,
+            adapter_key=self.adapter_key,
+            response=response,
+        )
+        if skip_result is not None:
+            return build_failed_census_result(
+                source,
+                adapter_key=self.adapter_key,
+                reason_code=skip_result.reason_code,
+                reason=skip_result.reason,
+                evidence=skip_result.evidence,
+            )
+
+        fetch_url = response.final_url or source.normalized_url or source.source_url
+        return finalize_supported_census(
+            source,
+            adapter_key=self.adapter_key,
+            parse_attempts=(
+                _parse_greenhouse_remix(response.text, fetch_url, direct_job_url=False),
+                _parse_greenhouse_json_ld(response.text, fetch_url),
+                _parse_greenhouse_board_html(response.text, fetch_url),
+            ),
+            default_failure_reason=(
+                "Greenhouse board did not expose a reliable posting count; census failed."
+            ),
+            evidence=build_response_evidence(response),
+        )
+
 
 def _parse_greenhouse_remix(
     html_text: str,
@@ -139,7 +189,7 @@ def _parse_greenhouse_remix_board(loader_data: dict[str, object], base_url: str)
         posting_records.extend(_greenhouse_postings_from_route(route_payload))
 
     if not posting_records:
-        return ParseAttempt()
+        return ParseAttempt(recognized_empty=True)
     if company is None:
         return ParseAttempt(
             ambiguous_reason="Greenhouse embedded board data was present but company metadata was missing; manual review required."

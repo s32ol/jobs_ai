@@ -6,6 +6,7 @@ from pathlib import Path
 import click
 import typer
 
+from .collect.census import run_board_census_command
 from .collect.cli import run_collect_command
 from .discover.cli import run_discover_command
 from .source_seed.cli import run_seed_sources_command
@@ -42,6 +43,8 @@ from .main import (
     render_application_assist_error_report,
     render_application_prefill_report,
     render_application_assist_report,
+    render_board_census_error_report,
+    render_board_census_report,
     render_collect_error_report,
     render_collect_report,
     render_discover_error_report,
@@ -618,6 +621,56 @@ def collect(
         typer.echo(render_collect_error_report(str(exc)))
         raise typer.Exit(code=1)
     typer.echo(render_collect_report(run.report))
+
+
+@app.command("board-census")
+def board_census(
+    from_file: Path = typer.Option(
+        ...,
+        "--from-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "Text file containing one Greenhouse, Lever, or Ashby board URL per line. "
+            "Blank lines and lines starting with # are ignored."
+        ),
+    ),
+    out_dir: Path | None = typer.Option(
+        None,
+        "--out-dir",
+        help="Optional output directory for board_census.json and board_census.csv.",
+    ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        help="Optional short label to include in the default run id and output directory name.",
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-board fetch timeout in seconds.",
+    ),
+) -> None:
+    """Fetch each unique supported board root once and report live posting counts."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        run = run_board_census_command(
+            paths,
+            from_file=from_file,
+            out_dir=out_dir,
+            label=label,
+            timeout_seconds=timeout,
+        )
+    except ValueError as exc:
+        typer.echo(render_board_census_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_board_census_report(run))
 
 
 @app.command("seed-sources")

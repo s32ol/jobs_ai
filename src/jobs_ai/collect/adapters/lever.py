@@ -3,10 +3,12 @@ from __future__ import annotations
 import re
 
 from ..fetch import FetchError, Fetcher
-from ..models import CollectedLead, OutcomeEvidence, SourceInput, SourceResult
+from ..models import CensusSourceResult, CollectedLead, OutcomeEvidence, SourceInput, SourceResult
 from .base import (
     ParseAttempt,
     build_absolute_url,
+    build_failed_census_result,
+    build_response_evidence,
     build_skipped_result,
     choose_first_text,
     company_from_page_metadata,
@@ -15,6 +17,7 @@ from .base import (
     extract_json_after_marker,
     extract_location_text,
     fetch_source,
+    finalize_supported_census,
     finalize_supported_collection,
     inspect_response_for_skip,
     normalize_text,
@@ -94,6 +97,51 @@ class LeverAdapter:
             direct_job_reason_code="lever_direct_job_ambiguous",
         )
 
+    def census(
+        self,
+        source: SourceInput,
+        *,
+        timeout_seconds: float,
+        fetcher: Fetcher,
+    ) -> CensusSourceResult:
+        try:
+            response = fetch_source(source, timeout_seconds=timeout_seconds, fetcher=fetcher)
+        except FetchError as exc:
+            return build_failed_census_result(
+                source,
+                adapter_key=self.adapter_key,
+                reason_code="fetch_failed",
+                reason=str(exc),
+                evidence=OutcomeEvidence(error=str(exc)),
+            )
+
+        skip_result = inspect_response_for_skip(
+            source,
+            adapter_key=self.adapter_key,
+            response=response,
+        )
+        if skip_result is not None:
+            return build_failed_census_result(
+                source,
+                adapter_key=self.adapter_key,
+                reason_code=skip_result.reason_code,
+                reason=skip_result.reason,
+                evidence=skip_result.evidence,
+            )
+
+        fetch_url = response.final_url or source.normalized_url or source.source_url
+        return finalize_supported_census(
+            source,
+            adapter_key=self.adapter_key,
+            parse_attempts=(
+                _parse_lever_embedded_json(response.text, fetch_url),
+                _parse_lever_json_ld(response.text, fetch_url),
+                _parse_lever_board_html(response.text, fetch_url),
+            ),
+            default_failure_reason="Lever board did not expose a reliable posting count; census failed.",
+            evidence=build_response_evidence(response),
+        )
+
 
 def _parse_lever_embedded_json(html_text: str, base_url: str) -> ParseAttempt:
     marker = next((candidate for candidate in _LEVER_PAYLOAD_MARKERS if candidate in html_text), None)
@@ -125,9 +173,7 @@ def _parse_lever_embedded_json(html_text: str, base_url: str) -> ParseAttempt:
             ambiguous_reason="Lever embedded job data was missing the postings list; manual review required."
         )
     if not postings:
-        return ParseAttempt(
-            ambiguous_reason="Lever embedded job data exposed no postings; manual review required."
-        )
+        return ParseAttempt(recognized_empty=True)
 
     incomplete_count = 0
     for posting in postings:
