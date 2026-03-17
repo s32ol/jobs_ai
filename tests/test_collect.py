@@ -75,6 +75,71 @@ class CollectTest(unittest.TestCase):
         )
         self.assertTrue(all(lead.portal_type == "greenhouse" for lead in run.collected_leads))
 
+    def test_run_collection_collects_modern_greenhouse_board_postings_from_initial_state_payload(self) -> None:
+        source_url = "https://boards.greenhouse.io/parloa"
+
+        def fetcher(request: FetchRequest) -> FetchResponse:
+            self.assertEqual(request.url, source_url)
+            return FetchResponse(
+                url=request.url,
+                final_url="https://job-boards.eu.greenhouse.io/parloa",
+                status_code=200,
+                content_type="text/html; charset=utf-8",
+                text=_fixture_text("greenhouse_board_modern.html"),
+            )
+
+        run = run_collection(
+            [source_url],
+            timeout_seconds=10.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(run.report.collected_count, 2)
+        self.assertEqual(run.report.manual_review_count, 0)
+        self.assertEqual(run.report.skipped_count, 0)
+        self.assertEqual(run.report.source_results[0].outcome, "collected")
+        self.assertEqual(run.report.source_results[0].source.portal_type, "greenhouse")
+        self.assertEqual(
+            [lead.title for lead in run.collected_leads],
+            ["Forward Deployed Engineer, DevOps", "Partner Solution Engineer"],
+        )
+        self.assertEqual(
+            [lead.location for lead in run.collected_leads],
+            ["New York Office", "Remotely in the USA"],
+        )
+        self.assertEqual(
+            [lead.source_job_id for lead in run.collected_leads],
+            ["4694390101", "4780830101"],
+        )
+
+    def test_run_collection_collects_modern_greenhouse_direct_job_from_remix_payload(self) -> None:
+        source_url = "https://job-boards.eu.greenhouse.io/parloa/jobs/4694390101"
+        run = run_collection(
+            [source_url],
+            timeout_seconds=10.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=_fixture_fetcher(
+                {
+                    source_url: _fixture_text("greenhouse_job_modern.html"),
+                }
+            ),
+        )
+
+        self.assertEqual(run.report.collected_count, 1)
+        self.assertEqual(run.report.manual_review_count, 0)
+        self.assertEqual(run.report.skipped_count, 0)
+        self.assertEqual(run.report.source_results[0].source.portal_type, "greenhouse")
+        self.assertEqual(run.collected_leads[0].company, "Parloa")
+        self.assertEqual(run.collected_leads[0].title, "Forward Deployed Engineer, DevOps")
+        self.assertEqual(run.collected_leads[0].location, "New York Office")
+        self.assertEqual(
+            run.collected_leads[0].apply_url,
+            "https://job-boards.eu.greenhouse.io/parloa/jobs/4694390101",
+        )
+        self.assertEqual(run.collected_leads[0].source_job_id, "4694390101")
+        self.assertEqual(run.collected_leads[0].salary_text, "Salary Range: $225,000 - $335,000 USD")
+
     def test_run_collection_collects_lever_direct_job(self) -> None:
         run = run_collection(
             ["https://jobs.lever.co/northwind/lever-data-1"],
@@ -504,6 +569,71 @@ class CollectTest(unittest.TestCase):
                     "portal_type": "greenhouse",
                     "salary_text": None,
                     "posted_at": None,
+                    "found_at": None,
+                },
+            ],
+        )
+
+    def test_modern_greenhouse_collect_artifacts_are_importer_compatible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "artifacts"
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            initialize_schema(database_path)
+
+            def fetcher(request: FetchRequest) -> FetchResponse:
+                self.assertEqual(request.url, "https://boards.greenhouse.io/parloa")
+                return FetchResponse(
+                    url=request.url,
+                    final_url="https://job-boards.eu.greenhouse.io/parloa",
+                    status_code=200,
+                    content_type="text/html; charset=utf-8",
+                    text=_fixture_text("greenhouse_board_modern.html"),
+                )
+
+            finalized_run = run_collect_command(
+                build_workspace_paths(Path("data/jobs_ai.db"), project_root=Path(tmp_dir)),
+                sources=("https://boards.greenhouse.io/parloa",),
+                from_file=None,
+                out_dir=output_dir,
+                label=None,
+                timeout_seconds=10.0,
+                report_only=False,
+                created_at=FIXED_CREATED_AT,
+                fetcher=fetcher,
+            )
+
+            artifact_paths = finalized_run.report.artifact_paths
+            assert artifact_paths is not None
+            import_result = import_jobs_from_file(database_path, artifact_paths.leads_path)
+            leads_payload = json.loads(artifact_paths.leads_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(import_result.inserted_count, 2)
+        self.assertEqual(import_result.errors, ())
+        self.assertEqual(
+            leads_payload,
+            [
+                {
+                    "source": "greenhouse",
+                    "company": "Parloa",
+                    "title": "Forward Deployed Engineer, DevOps",
+                    "location": "New York Office",
+                    "apply_url": "https://job-boards.eu.greenhouse.io/parloa/jobs/4694390101",
+                    "source_job_id": "4694390101",
+                    "portal_type": "greenhouse",
+                    "salary_text": None,
+                    "posted_at": "2025-10-16T11:47:28-04:00",
+                    "found_at": None,
+                },
+                {
+                    "source": "greenhouse",
+                    "company": "Parloa",
+                    "title": "Partner Solution Engineer",
+                    "location": "Remotely in the USA",
+                    "apply_url": "https://job-boards.eu.greenhouse.io/parloa/jobs/4780830101",
+                    "source_job_id": "4780830101",
+                    "portal_type": "greenhouse",
+                    "salary_text": None,
+                    "posted_at": "2026-02-12T04:15:52-05:00",
                     "found_at": None,
                 },
             ],

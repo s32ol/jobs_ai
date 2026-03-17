@@ -21,6 +21,7 @@ class QueueRecommendation:
     title: str
     location: str | None
     apply_url: str | None
+    portal_type: str | None
     source: str
     score: int
     resume_variant_key: str
@@ -43,11 +44,13 @@ def select_queue_recommendations(
     *,
     limit: int | None = None,
     ingest_batch_id: str | None = None,
+    query_text: str | None = None,
 ) -> tuple[QueueRecommendation, ...]:
     queued_jobs = select_ranked_apply_queue(
         database_path,
         limit=limit,
         ingest_batch_id=ingest_batch_id,
+        query_text=query_text,
     )
     return tuple(recommend_queued_job(job) for job in queued_jobs)
 
@@ -63,6 +66,7 @@ def recommend_queued_job(queued_job: RankedQueuedJob) -> QueueRecommendation:
         title=queued_job.scored_job.title,
         location=queued_job.scored_job.location,
         apply_url=queued_job.scored_job.apply_url,
+        portal_type=queued_job.scored_job.portal_type,
         source=queued_job.scored_job.source,
         score=queued_job.scored_job.total_score,
         resume_variant_key=resume_variant.key,

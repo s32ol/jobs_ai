@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 import json
+import webbrowser
 
 from .collect.models import CollectRunReport
-from .discover.models import DiscoverRunReport
+from .discover.models import DiscoverRun, DiscoverRunReport
 from .source_seed.models import SourceSeedRunReport
 from .application_tracking import (
     APPLICATION_STATUSES,
@@ -13,6 +15,7 @@ from .application_tracking import (
     ApplicationStatusSnapshot,
 )
 from .application_assist import ApplicationAssist
+from .application_prefill import ApplicationPrefillResult
 from .config import GEOGRAPHY_PRIORITY, SEARCH_PRIORITY, TARGET_ROLES, Settings
 from .db import REQUIRED_TABLES, SessionHistoryEntry
 from .launch_dry_run import LaunchDryRunStep
@@ -21,7 +24,7 @@ from .maintenance import BackfillResult
 from .jobs.importer import JobImportResult
 from .launch_plan import LaunchPlan
 from .jobs.queue import QueuedJob
-from .launch_preview import LaunchPreview
+from .launch_preview import LaunchPreview, select_launch_preview
 from .jobs.scoring import ScoredJob
 from .portal_support import SUPPORTED_PORTAL_TYPES, PortalSupport, build_portal_support
 from .resume.recommendations import QueueRecommendation
@@ -31,10 +34,51 @@ from .session_history import SessionInspection, SessionReopenResult
 from .session_mark import SessionMarkResult
 from .session_manifest import ManifestSelection, SessionManifest, SessionSelectionScope
 from .session_start import SessionStartResult
+from .sources.jobposting_parser import JobPostingExtractionResult
+from .sources.models import (
+    SourceRegistryHarvestCompaniesResult,
+    SourceRegistryATSDiscoveryResult,
+    SourceRegistryDetectSitesResult,
+    SourceRegistryCollectResult,
+    SourceRegistryEntry,
+    SourceRegistryExpandResult,
+    SourceRegistryImportResult,
+    SourceRegistryMutationResult,
+    SourceRegistrySeedBulkResult,
+    SourceRegistryVerificationResult,
+)
 from .stats import OperatorStats
 from .workspace import WorkspacePaths
 
 CLI_EXAMPLE_PREFIX = "python -m jobs_ai"
+APPLY_DEFAULT_LIMIT = 5
+APPLY_HARD_MAX_LIMIT = 20
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyItem:
+    job_id: int
+    company: str
+    title: str
+    location: str | None
+    apply_url: str
+    source_rank: int
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyResult:
+    query: str
+    requested_limit: int
+    effective_limit: int
+    print_only: bool
+    items: tuple[ApplyItem, ...]
+    matching_count: int
+    skipped_missing_apply_url_count: int
+    warning: str | None
+
+    @property
+    def selected_count(self) -> int:
+        return len(self.items)
 
 
 def _render_bullets(title: str, values: Sequence[str | Path]) -> list[str]:
@@ -62,6 +106,80 @@ def _command_with_optional_limit(command: str, limit: int | None) -> str:
     if limit is None:
         return _cli_example(command)
     return _cli_example(f"{command} --limit {limit}")
+
+
+def run_apply_workflow(
+    database_path: Path,
+    *,
+    query: str,
+    limit: int = APPLY_DEFAULT_LIMIT,
+    print_only: bool = False,
+) -> ApplyResult:
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise ValueError("query must not be blank")
+
+    effective_limit, warning = _resolve_apply_limit(limit)
+    previews = select_launch_preview(
+        database_path,
+        limit=None,
+        query_text=normalized_query,
+    )
+
+    launchable_items: list[ApplyItem] = []
+    skipped_missing_apply_url_count = 0
+    for preview in previews:
+        normalized_apply_url = _normalize_apply_url(preview.apply_url)
+        if normalized_apply_url is None:
+            skipped_missing_apply_url_count += 1
+            continue
+        launchable_items.append(
+            ApplyItem(
+                job_id=preview.job_id,
+                company=preview.company,
+                title=preview.title,
+                location=preview.location,
+                apply_url=normalized_apply_url,
+                source_rank=preview.rank,
+            )
+        )
+
+    selected_items = tuple(launchable_items[:effective_limit])
+    if not print_only:
+        for item in selected_items:
+            webbrowser.open(item.apply_url)
+
+    return ApplyResult(
+        query=normalized_query,
+        requested_limit=limit,
+        effective_limit=effective_limit,
+        print_only=print_only,
+        items=selected_items,
+        matching_count=len(previews),
+        skipped_missing_apply_url_count=skipped_missing_apply_url_count,
+        warning=warning,
+    )
+
+
+def _resolve_apply_limit(limit: int) -> tuple[int, str | None]:
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    if limit <= APPLY_HARD_MAX_LIMIT:
+        return limit, None
+    return (
+        APPLY_HARD_MAX_LIMIT,
+        (
+            f"requested limit {limit} exceeds hard max {APPLY_HARD_MAX_LIMIT}; "
+            f"clamped to {APPLY_HARD_MAX_LIMIT}"
+        ),
+    )
+
+
+def _normalize_apply_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized_value = value.strip()
+    return normalized_value or None
 
 
 def render_status_report(settings: Settings, paths: WorkspacePaths) -> str:
@@ -379,6 +497,596 @@ def render_collect_error_report(error: str) -> str:
     )
 
 
+def render_source_registry_list_report(
+    paths: WorkspacePaths,
+    entries: Sequence[SourceRegistryEntry],
+) -> str:
+    lines = [
+        "jobs_ai sources list",
+        f"database path: {paths.database_path}",
+        f"registry entries: {len(entries)}",
+        f"status: {'empty' if not entries else 'success'}",
+    ]
+    if not entries:
+        _append_guidance(
+            lines,
+            "next:",
+            (
+                _cli_example("sources add https://boards.greenhouse.io/example"),
+                _cli_example("seed-sources --add-to-registry \"Example | example.com\""),
+            ),
+        )
+        return "\n".join(lines)
+
+    for entry in entries:
+        descriptor = entry.company or entry.label or "label missing"
+        lines.append(
+            f"- [{entry.source_id}] {entry.status} | {entry.portal_type or 'portal unknown'} | {descriptor} | {entry.source_url}"
+        )
+        verification_text = entry.last_verified_at or "never"
+        lines.append(f"  last verified: {verification_text}")
+        if entry.provenance is not None:
+            lines.append(f"  provenance: {entry.provenance}")
+    return "\n".join(lines)
+
+
+def render_source_registry_add_report(
+    paths: WorkspacePaths,
+    result: SourceRegistryMutationResult,
+) -> str:
+    entry = result.entry
+    lines = [
+        "jobs_ai sources add",
+        f"database path: {paths.database_path}",
+        f"action: {result.action}",
+        f"source id: {entry.source_id}",
+        f"source URL: {entry.source_url}",
+        f"portal type: {entry.portal_type or 'unknown'}",
+        f"company/label: {entry.company or entry.label or 'unknown'}",
+        f"status: {entry.status}",
+    ]
+    if result.source_result is not None:
+        lines.append(
+            f"verification: {result.source_result.outcome} | {result.source_result.reason_code}"
+        )
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("sources list"),
+            _cli_example("sources collect --import"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_source_registry_import_report(
+    paths: WorkspacePaths,
+    input_path: Path,
+    result: SourceRegistryImportResult,
+) -> str:
+    lines = [
+        "jobs_ai sources import",
+        f"database path: {paths.database_path}",
+        f"input file: {input_path}",
+        f"created: {result.created_count}",
+        f"updated: {result.updated_count}",
+        f"unchanged: {result.unchanged_count}",
+        f"errors: {result.error_count}",
+        f"status: {'completed with errors' if result.errors else 'success'}",
+    ]
+    if result.results:
+        lines.append("registry updates:")
+        lines.extend(
+            f"- [{mutation.entry.source_id}] {mutation.action} | {mutation.entry.status} | {mutation.entry.source_url}"
+            for mutation in result.results
+        )
+    if result.errors:
+        lines.append("errors:")
+        lines.extend(f"- {error}" for error in result.errors)
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("sources list"),
+            _cli_example("sources verify"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_source_registry_verify_report(
+    paths: WorkspacePaths,
+    results: Sequence[SourceRegistryVerificationResult],
+) -> str:
+    lines = [
+        "jobs_ai sources verify",
+        f"database path: {paths.database_path}",
+        f"verified sources: {len(results)}",
+        f"active: {sum(1 for result in results if result.after.status == 'active')}",
+        f"manual review: {sum(1 for result in results if result.after.status == 'manual_review')}",
+        f"inactive: {sum(1 for result in results if result.after.status == 'inactive')}",
+        f"status: {'nothing selected' if not results else 'success'}",
+    ]
+    for result in results:
+        lines.append(
+            f"- [{result.after.source_id}] {result.before.status} -> {result.after.status} | {result.after.source_url} | {result.source_result.reason_code}"
+        )
+    return "\n".join(lines)
+
+
+def render_source_registry_deactivate_report(
+    paths: WorkspacePaths,
+    entry: SourceRegistryEntry,
+) -> str:
+    return "\n".join(
+        [
+            "jobs_ai sources deactivate",
+            f"database path: {paths.database_path}",
+            f"source id: {entry.source_id}",
+            f"source URL: {entry.source_url}",
+            "status: inactive",
+        ]
+    )
+
+
+def render_source_registry_collect_report(
+    paths: WorkspacePaths,
+    result: SourceRegistryCollectResult,
+) -> str:
+    collect_report = result.collect_run.report
+    artifact_paths = collect_report.artifact_paths
+    assert artifact_paths is not None
+    lines = [
+        "jobs_ai sources collect",
+        f"database path: {paths.database_path}",
+        f"selected registry sources: {result.selected_source_count}",
+        f"verified before collect: {result.verified_source_count}",
+        f"collect run id: {collect_report.run_id or artifact_paths.output_dir.name}",
+        f"collect output dir: {artifact_paths.output_dir}",
+        f"collected jobs: {collect_report.collected_count}",
+        f"manual review jobs: {collect_report.manual_review_count}",
+        f"skipped sources: {collect_report.skipped_count}",
+        f"import requested: {'yes' if result.import_requested else 'no'}",
+        f"status: {'success' if collect_report.collected_count or collect_report.manual_review_count else 'completed with skips'}",
+    ]
+    if result.import_result is not None:
+        lines.append(f"imported jobs: {result.import_result.inserted_count}")
+        lines.append(f"import batch id: {result.import_result.batch_id or 'none'}")
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example(f"import {artifact_paths.leads_path}") if artifact_paths.leads_path is not None and not result.import_requested else _cli_example("session start --limit 25"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_source_registry_extract_jobposting_report(
+    paths: WorkspacePaths,
+    result: JobPostingExtractionResult,
+) -> str:
+    lines = [
+        "jobs_ai sources extract-jobposting",
+        f"database path: {paths.database_path}",
+        f"batch id: {result.batch_id}",
+        f"inputs processed: {result.input_count}",
+        f"matched pages: {result.matched_page_count}",
+        f"no-match pages: {result.no_match_count}",
+        f"failed inputs: {result.failed_count}",
+        f"JSON-LD blocks found: {result.json_ld_block_count}",
+        f"JobPosting objects found: {result.jobposting_count}",
+        f"imported jobs: {result.inserted_count}",
+        f"duplicates skipped: {result.duplicate_count}",
+        f"invalid job postings: {result.invalid_count}",
+        f"registry links: {result.registry_link_count}",
+        f"status: {'completed with errors' if result.failed_count else 'success'}",
+    ]
+
+    matched_results = [
+        item
+        for item in result.target_results
+        if item.outcome == "success"
+    ]
+    if matched_results:
+        lines.append("matched pages:")
+        lines.extend(
+            (
+                f"- {item.raw_input} | inserted {item.inserted_count} | "
+                f"duplicates {item.duplicate_count} | invalid {item.invalid_count} | "
+                f"links {item.registry_link_count} | {item.final_url or item.resolved_url}"
+            )
+            for item in matched_results
+        )
+
+    no_match_results = [
+        item
+        for item in result.target_results
+        if item.outcome == "no_match"
+    ]
+    if no_match_results:
+        lines.append("no-match pages:")
+        lines.extend(
+            f"- {item.raw_input} | {item.reason_code} | {item.reason}"
+            for item in no_match_results
+        )
+
+    failed_results = [
+        item
+        for item in result.target_results
+        if item.outcome == "failed"
+    ]
+    if failed_results:
+        lines.append("failed inputs:")
+        lines.extend(
+            f"- {item.raw_input} | {item.reason_code} | {item.reason}"
+            for item in failed_results
+        )
+
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example(f"session start --batch-id {result.batch_id} --limit 25"),
+            _cli_example("queue --limit 25"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_source_registry_discover_ats_report(
+    paths: WorkspacePaths,
+    result: SourceRegistryATSDiscoveryResult,
+) -> str:
+    lines = [
+        "jobs_ai sources discover-ats",
+        f"database path: {paths.database_path}",
+        f"candidate slugs available: {result.candidate_slug_count}",
+        f"candidate slugs tested: {result.tested_slug_count}",
+        f"providers: {', '.join(result.providers)}",
+        f"active boards found: {result.active_count}",
+        f"greenhouse boards found: {result.greenhouse_count}",
+        f"lever boards found: {result.lever_count}",
+        f"ashby boards found: {result.ashby_count}",
+        f"manual review boards: {result.manual_review_count}",
+        f"ignored probe results: {result.ignored_count}",
+        f"registry created: {result.created_count}",
+        f"registry updated: {result.updated_count}",
+        f"registry unchanged: {result.unchanged_count}",
+        f"limit: {result.limit}",
+        f"max concurrency: {result.max_concurrency}",
+        f"max requests per second: {result.max_requests_per_second:.1f}",
+        f"status: {'success with follow-up' if result.manual_review_count else 'success'}",
+    ]
+    if result.output_path is not None:
+        lines.append(f"output file: {result.output_path}")
+
+    lines.append("provider probe counts:")
+    lines.extend(
+        (
+            f"- {item.provider} | active {item.active} | "
+            f"manual_review {item.manual_review} | ignored {item.ignored}"
+        )
+        for item in result.provider_counts
+    )
+
+    manual_review_items = result.manual_review_item_results
+    if manual_review_items:
+        lines.append("manual review sources:")
+        lines.extend(
+            (
+                f"- [{item.mutation.entry.source_id}] {item.action} | "
+                f"{item.portal_type} | {item.source_url} | {item.reason_code}"
+            )
+            for item in manual_review_items
+        )
+
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("sources collect --import"),
+            _cli_example('run --use-registry "python"'),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_source_registry_harvest_companies_report(
+    paths: WorkspacePaths,
+    result: SourceRegistryHarvestCompaniesResult,
+) -> str:
+    lines = [
+        "jobs_ai sources harvest-companies",
+        f"database path: {paths.database_path}",
+        f"run id: {result.run_id}",
+        f"output dir: {result.artifact_paths.output_dir}",
+        f"sources: {', '.join(result.source_names)}",
+        f"Discovered {result.harvested_domain_count} company domains",
+        f"directory pages fetched: {result.directory_page_count - result.failed_page_count}",
+        f"directory pages failed: {result.failed_page_count}",
+        f"harvested domains artifact: {result.artifact_paths.harvested_domains_path}",
+        f"harvest report: {result.artifact_paths.harvest_report_path}",
+        f"confirmed registry sources: {result.detect_sites_result.confirmed_count}",
+        f"manual review registry sources: {result.detect_sites_result.manual_review_count}",
+        f"failed company domains: {result.detect_sites_result.failed_count}",
+        f"registry created: {result.detect_sites_result.created_count}",
+        f"registry updated: {result.detect_sites_result.updated_count}",
+        f"registry unchanged: {result.detect_sites_result.unchanged_count}",
+        f"timeout seconds: {result.timeout_seconds:.1f}",
+        f"max requests per second: {result.max_requests_per_second:.1f}",
+        (
+            "status: success with follow-up"
+            if result.failed_page_count
+            or result.detect_sites_result.manual_review_count
+            or result.detect_sites_result.failed_count
+            else "status: success"
+        ),
+    ]
+
+    failed_pages = [
+        page_result
+        for page_result in result.page_results
+        if page_result.error is not None
+    ]
+    if failed_pages:
+        lines.append("failed directory pages:")
+        lines.extend(
+            f"- {page_result.source_name} | {page_result.directory_url} | {page_result.error}"
+            for page_result in failed_pages
+        )
+
+    manual_review_items = list(
+        {
+            item.mutation.entry.source_id: item
+            for item in result.detect_sites_result.item_results
+            if item.outcome == "manual_review" and item.mutation is not None
+        }.values()
+    )
+    if manual_review_items:
+        lines.append("manual review sources:")
+        lines.extend(
+            (
+                f"- [{item.mutation.entry.source_id}] {item.mutation.action} | "
+                f"{item.portal_type or 'unknown'} | {item.source_url} | {item.reason_code}"
+            )
+            for item in manual_review_items
+        )
+
+    failed_inputs = [
+        input_result
+        for input_result in result.detect_sites_result.input_results
+        if input_result.outcome == "failed"
+    ]
+    if failed_inputs:
+        lines.append("failed company domains:")
+        lines.extend(
+            (
+                f"- {input_result.raw_input} | {input_result.reason_code} | "
+                f"{input_result.reason}"
+            )
+            for input_result in failed_inputs
+        )
+
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("sources collect --import"),
+            _cli_example('run --use-registry "python"'),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_source_registry_sync_report(
+    command_label: str,
+    results: Sequence[SourceRegistryMutationResult],
+) -> str:
+    created_count = sum(1 for result in results if result.action == "created")
+    updated_count = sum(1 for result in results if result.action == "updated")
+    unchanged_count = sum(1 for result in results if result.action == "unchanged")
+    lines = [
+        command_label,
+        f"registry created: {created_count}",
+        f"registry updated: {updated_count}",
+        f"registry unchanged: {unchanged_count}",
+        f"status: {'no confirmed sources' if not results else 'success'}",
+    ]
+    if results:
+        lines.extend(
+            f"- [{result.entry.source_id}] {result.action} | {result.entry.source_url}"
+            for result in results
+        )
+    return "\n".join(lines)
+
+
+def render_source_registry_seed_bulk_report(
+    paths: WorkspacePaths,
+    result: SourceRegistrySeedBulkResult,
+) -> str:
+    lines = [
+        "jobs_ai sources seed-bulk",
+        f"database path: {paths.database_path}",
+        f"input companies: {result.input_company_count}",
+        f"starter lists: {', '.join(result.starter_lists) if result.starter_lists else 'none'}",
+        f"confirmed registry sources: {result.confirmed_count}",
+        f"manual review registry sources: {result.manual_review_count}",
+        f"failed inputs: {result.failed_count}",
+        f"registry created: {result.created_count}",
+        f"registry updated: {result.updated_count}",
+        f"registry unchanged: {result.unchanged_count}",
+        f"status: {'success with follow-up' if result.manual_review_count or result.failed_count else 'success'}",
+    ]
+    manual_review_items = list(
+        {
+            item.mutation.entry.source_id: item
+            for item in result.item_results
+            if item.outcome == "manual_review" and item.mutation is not None
+        }.values()
+    )
+    if manual_review_items:
+        lines.append("manual review sources:")
+        lines.extend(
+            (
+                f"- [{item.mutation.entry.source_id}] {item.mutation.action} | "
+                f"{item.portal_type or 'unknown'} | {item.source_url} | {item.reason_code}"
+            )
+            for item in manual_review_items
+        )
+
+    failed_items = [
+        item
+        for item in result.item_results
+        if item.outcome == "failed"
+    ]
+    if failed_items:
+        lines.append("failed inputs:")
+        lines.extend(
+            f"- {item.raw_input} | {item.reason_code} | {item.reason}"
+            for item in failed_items
+        )
+
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("sources collect --import"),
+            _cli_example('run --use-registry "python"'),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_source_registry_detect_sites_report(
+    paths: WorkspacePaths,
+    result: SourceRegistryDetectSitesResult,
+) -> str:
+    lines = [
+        "jobs_ai sources detect-sites",
+        f"database path: {paths.database_path}",
+        f"inputs processed: {result.input_count}",
+        f"starter lists: {', '.join(result.starter_lists) if result.starter_lists else 'none'}",
+        f"confirmed registry sources: {result.confirmed_count}",
+        f"manual review registry sources: {result.manual_review_count}",
+        f"failed inputs: {result.failed_count}",
+        f"registry created: {result.created_count}",
+        f"registry updated: {result.updated_count}",
+        f"registry unchanged: {result.unchanged_count}",
+        f"status: {'success with follow-up' if result.manual_review_count or result.failed_count else 'success'}",
+    ]
+
+    manual_review_items = list(
+        {
+            item.mutation.entry.source_id: item
+            for item in result.item_results
+            if item.outcome == "manual_review" and item.mutation is not None
+        }.values()
+    )
+    if manual_review_items:
+        lines.append("manual review sources:")
+        lines.extend(
+            (
+                f"- [{item.mutation.entry.source_id}] {item.mutation.action} | "
+                f"{item.portal_type or 'unknown'} | {item.source_url} | {item.reason_code}"
+            )
+            for item in manual_review_items
+        )
+
+    failed_inputs = [
+        input_result
+        for input_result in result.input_results
+        if input_result.outcome == "failed"
+    ]
+    if failed_inputs:
+        lines.append("failed inputs:")
+        lines.extend(
+            (
+                f"- {input_result.raw_input} | {input_result.reason_code} | "
+                f"{input_result.reason}"
+            )
+            for input_result in failed_inputs
+        )
+
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("sources collect --import"),
+            _cli_example('run --use-registry "python"'),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_source_registry_expand_report(
+    paths: WorkspacePaths,
+    result: SourceRegistryExpandResult,
+) -> str:
+    lines = [
+        "jobs_ai sources expand-registry",
+        f"database path: {paths.database_path}",
+        f"seed lane ran: {'yes' if result.seed_result is not None else 'no'}",
+        f"detect-sites lane ran: {'yes' if result.detect_sites_result is not None else 'no'}",
+        f"discover-ats lane ran: {'yes' if result.discover_ats_result is not None else 'no'}",
+        f"structured clues enabled: {'yes' if result.structured_clues_enabled else 'no'}",
+        f"active sources touched: {result.active_source_count}",
+        f"manual review sources touched: {result.manual_review_source_count}",
+        f"failed inputs: {result.failed_input_count}",
+        f"ignored probe results: {result.ignored_probe_count}",
+        f"registry created: {result.created_count}",
+        f"registry updated: {result.updated_count}",
+        f"registry unchanged: {result.unchanged_count}",
+        f"status: {'success with follow-up' if result.manual_review_source_count or result.failed_input_count else 'success'}",
+    ]
+
+    if result.seed_result is not None:
+        lines.append(
+            "seed lane:"
+            f" inputs {result.seed_result.input_company_count}"
+            f" | active {result.seed_result.confirmed_count}"
+            f" | manual_review {result.seed_result.manual_review_count}"
+            f" | failed {result.seed_result.failed_count}"
+        )
+
+    if result.detect_sites_result is not None:
+        lines.append(
+            "detect-sites lane:"
+            f" inputs {result.detect_sites_result.input_count}"
+            f" | active {result.detect_sites_result.confirmed_count}"
+            f" | manual_review {result.detect_sites_result.manual_review_count}"
+            f" | failed {result.detect_sites_result.failed_count}"
+        )
+
+    if result.discover_ats_result is not None:
+        lines.append(
+            "discover-ats lane:"
+            f" slugs tested {result.discover_ats_result.tested_slug_count}"
+            f" | active {result.discover_ats_result.active_count}"
+            f" | manual_review {result.discover_ats_result.manual_review_count}"
+            f" | ignored {result.discover_ats_result.ignored_count}"
+        )
+        lines.append("provider probe counts:")
+        lines.extend(
+            (
+                f"- {item.provider} | active {item.active} | "
+                f"manual_review {item.manual_review} | ignored {item.ignored}"
+            )
+            for item in result.discover_ats_result.provider_counts
+        )
+
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("sources collect --import"),
+            _cli_example('run --use-registry "python" --limit 25'),
+        ),
+    )
+    return "\n".join(lines)
+
+
 def render_seed_sources_report(report: SourceSeedRunReport) -> str:
     artifact_paths = report.artifact_paths
     assert artifact_paths is not None
@@ -470,7 +1178,11 @@ def render_discover_report(report: DiscoverRunReport) -> str:
     assert artifact_paths is not None
 
     status = "success"
-    if report.confirmed_count == 0 and report.manual_review_count == 0 and report.skipped_count:
+    if report.has_fatal_search_failure:
+        status = "failed"
+    elif report.raw_hit_count == 0 and not report.has_search_failures:
+        status = "completed with zero search hits"
+    elif report.confirmed_count == 0 and report.manual_review_count == 0 and report.skipped_count:
         status = "completed with skips"
     elif report.manual_review_count or report.skipped_count:
         status = "success with follow-up"
@@ -504,15 +1216,15 @@ def render_discover_report(report: DiscoverRunReport) -> str:
         lines.append("manual review artifact: not written (--report-only)")
     else:
         lines.append(f"manual review artifact: {artifact_paths.manual_review_sources_path}")
+    if artifact_paths.search_artifact_dir is not None:
+        lines.append(f"search artifacts dir: {artifact_paths.search_artifact_dir}")
     lines.extend(_render_discovery_summary_lines(report))
+    lines.extend(_render_search_summary_lines(report))
 
-    search_errors = [result for result in report.search_results if result.error]
-    if search_errors:
-        lines.append("search query issues:")
-        lines.extend(
-            f"- {result.plan.site_filter} | {result.error}"
-            for result in search_errors
-        )
+    search_outcomes = [result for result in report.search_results if result.status != "success"]
+    if search_outcomes:
+        lines.append("search query outcomes:")
+        lines.extend(_format_search_execution_line(result) for result in search_outcomes)
 
     manual_review_results = [
         result
@@ -557,7 +1269,9 @@ def render_discover_report(report: DiscoverRunReport) -> str:
             lines.append("import errors:")
             lines.extend(f"- {error}" for error in import_summary.errors)
 
-    if report.confirmed_count == 0:
+    if report.has_fatal_search_failure:
+        lines.append("note: no ATS sources were auto-confirmed because the search provider returned anomalous or unusable responses")
+    elif report.confirmed_count == 0:
         lines.append("note: no ATS sources were auto-confirmed from this query")
 
     next_steps: list[str] = []
@@ -587,6 +1301,23 @@ def _format_discover_result_line(result) -> str:
     return line
 
 
+def _format_search_execution_line(result) -> str:
+    line = (
+        f"- {result.plan.site_filter} | {result.status} | attempts {result.attempt_count} | "
+        f"hits {result.hit_count}"
+    )
+    if result.error:
+        line = f"{line} | {result.error}"
+    elif result.status == "zero_results":
+        line = f"{line} | provider returned an explicit zero-results page"
+    evidence = result.evidence
+    if evidence is not None and evidence.detected_patterns:
+        line = f"{line} | patterns: {', '.join(evidence.detected_patterns)}"
+    if result.raw_artifact_paths:
+        line = f"{line} | artifacts: {len(result.raw_artifact_paths)}"
+    return line
+
+
 def _render_discovery_summary_lines(report: DiscoverRunReport) -> list[str]:
     confirmed_counts = {
         "greenhouse": 0,
@@ -608,6 +1339,30 @@ def _render_discovery_summary_lines(report: DiscoverRunReport) -> list[str]:
         f"- lever sources: {confirmed_counts['lever']}",
         f"- ashby sources: {confirmed_counts['ashby']}",
         f"- workday sources (manual review): {workday_manual_review_count}",
+    ]
+
+
+def _render_search_summary_lines(report: DiscoverRunReport) -> list[str]:
+    status_counts = {
+        "success": 0,
+        "zero_results": 0,
+        "provider_anomaly": 0,
+        "parse_failure": 0,
+        "fetch_failure": 0,
+    }
+    recovered_after_retry = 0
+    for result in report.search_results:
+        status_counts[result.status] += 1
+        if result.status == "success" and result.attempt_count > 1:
+            recovered_after_retry += 1
+    return [
+        "search summary:",
+        f"- success: {status_counts['success']}",
+        f"- zero_results: {status_counts['zero_results']}",
+        f"- provider_anomaly: {status_counts['provider_anomaly']}",
+        f"- parse_failure: {status_counts['parse_failure']}",
+        f"- fetch_failure: {status_counts['fetch_failure']}",
+        f"- recovered_after_retry: {recovered_after_retry}",
     ]
 
 
@@ -764,6 +1519,62 @@ def render_queue_report(
     return "\n".join(lines)
 
 
+def render_apply_report(
+    paths: WorkspacePaths,
+    result: ApplyResult,
+) -> str:
+    lines = [
+        "jobs_ai apply",
+        f"database path: {paths.database_path}",
+        f"query: {result.query}",
+        f"requested limit: {result.requested_limit}",
+        f"effective limit: {result.effective_limit}",
+        f"print only: {'yes' if result.print_only else 'no'}",
+        f"matching jobs: {result.matching_count}",
+        f"launchable jobs: {result.selected_count}",
+    ]
+    if result.warning is not None:
+        lines.append(f"warning: {result.warning}")
+    if result.skipped_missing_apply_url_count:
+        lines.append(
+            "matching jobs without apply_url: "
+            f"{result.skipped_missing_apply_url_count}"
+        )
+    if not result.items:
+        lines.append("status: no launchable jobs matched query")
+        return "\n".join(lines)
+
+    lines.append("status: success")
+    lines.append("")
+    lines.append(
+        f"{'Printing' if result.print_only else 'Opening'} "
+        f"{result.selected_count} applications..."
+    )
+    for index, item in enumerate(result.items, start=1):
+        lines.extend(
+            [
+                "",
+                f"{index}. {item.title} - {item.company}",
+                (
+                    f"   {'Apply URL' if result.print_only else 'Opening'}: "
+                    f"{item.apply_url}"
+                ),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_apply_error_report(paths: WorkspacePaths, error: str) -> str:
+    return "\n".join(
+        [
+            "jobs_ai apply",
+            f"database path: {paths.database_path}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
 def render_recommendation_report(
     paths: WorkspacePaths,
     recommendations: Sequence[QueueRecommendation],
@@ -892,12 +1703,16 @@ def render_session_start_report(
         f"limit: {result.limit}",
         f"status: {'no new jobs in queue' if not result.items else 'success'}",
     ]
+    insert_at = 4
     if result.export_result.label is not None:
-        lines.insert(4, f"label: {result.export_result.label}")
+        lines.insert(insert_at, f"label: {result.export_result.label}")
+        insert_at += 1
     if result.selection_scope is not None:
-        lines.insert(4, f"selection scope: {_describe_selection_scope(result.selection_scope)}")
+        scope_lines = [f"selection scope: {_describe_selection_scope(result.selection_scope)}"]
         if result.selection_scope.source_query is not None:
-            lines.insert(5, f"source query: {result.selection_scope.source_query}")
+            scope_lines.append(f"source query: {result.selection_scope.source_query}")
+        scope_lines.extend(_selection_scope_detail_lines(result.selection_scope))
+        lines[insert_at:insert_at] = scope_lines
 
     if result.open_requested:
         assert result.executor_mode is not None
@@ -1041,9 +1856,11 @@ def render_session_inspect_report(
     if manifest.label is not None:
         lines.insert(4, f"label: {manifest.label}")
     if manifest.selection_scope is not None:
-        lines.insert(4, f"selection scope: {_describe_selection_scope(manifest.selection_scope)}")
+        scope_lines = [f"selection scope: {_describe_selection_scope(manifest.selection_scope)}"]
         if manifest.selection_scope.source_query is not None:
-            lines.insert(5, f"source query: {manifest.selection_scope.source_query}")
+            scope_lines.append(f"source query: {manifest.selection_scope.source_query}")
+        scope_lines.extend(_selection_scope_detail_lines(manifest.selection_scope))
+        lines[4:4] = scope_lines
     if inspection.status_counts:
         lines.append("current tracked statuses:")
         lines.extend(
@@ -1130,6 +1947,64 @@ def render_run_report(
     *,
     show_portal_hints: bool = False,
 ) -> str:
+    if result.intake_mode == "registry":
+        lines = [
+            "jobs_ai run",
+            f"database path: {paths.database_path}",
+            f"query: {result.query}",
+            "intake mode: registry",
+            f"workflow dir: {result.output_dir}",
+            f"registry sources selected: {result.confirmed_source_count}",
+            f"registry sources verified: {result.registry_verified_source_count}",
+            f"collected sources: {len(result.collected_sources)}",
+            f"imported jobs: {result.imported_jobs_count}",
+            f"import batch id: {result.import_result.batch_id if result.import_result is not None else (result.collect_run.report.run_id if result.collect_run is not None else result.output_dir.name)}",
+            f"manifest path: {result.manifest_path}",
+            f"selected jobs: {result.session_result.selected_count}",
+            f"launchable jobs: {result.session_result.plan.launchable_items}",
+            f"recommendations: {result.recommendation_count}",
+            f"resume files resolved: {result.session_result.resolved_resume_count}",
+            f"portal hints: {result.portal_hint_count}",
+            f"session limit: {result.session_limit}",
+            f"status: {'no matching new jobs in queue' if not result.session_result.items else 'success'}",
+        ]
+        if result.label is not None:
+            lines.insert(5, f"label: {result.label}")
+        if result.session_result.selection_scope is not None:
+            scope_lines = [
+                f"session scope: {_describe_selection_scope(result.session_result.selection_scope)}"
+            ]
+            scope_lines.extend(_selection_scope_detail_lines(result.session_result.selection_scope))
+            insert_at = 6 if result.label is not None else 5
+            lines[insert_at:insert_at] = scope_lines
+        if result.open_requested:
+            lines.append(f"open executor: {result.executor_mode or 'browser_stub'}")
+        if result.import_result is not None and result.import_result.errors:
+            lines.append("import errors:")
+            lines.extend(f"- {error}" for error in result.import_result.errors)
+
+        resume_lines = _render_run_resume_lines(result)
+        if resume_lines:
+            lines.append("resume variants:")
+            lines.extend(resume_lines)
+
+        if show_portal_hints:
+            portal_lines = _render_run_portal_lines(result)
+            if portal_lines:
+                lines.append("portal hint details:")
+                lines.extend(portal_lines)
+
+        _append_guidance(
+            lines,
+            "next:",
+            _session_start_next_commands(
+                manifest_path=result.manifest_path,
+                opened_in_browser=_reports_include_opened(result.session_result.execution_reports),
+                show_portal_hints=show_portal_hints,
+            ),
+        )
+        return "\n".join(lines)
+
     collect_suffix = ""
     if result.collect_limit is not None and result.confirmed_source_count > result.collect_limit:
         collect_suffix = f" of {result.confirmed_source_count} confirmed"
@@ -1138,7 +2013,12 @@ def render_run_report(
         "jobs_ai run",
         f"database path: {paths.database_path}",
         f"query: {result.query}",
+        "intake mode: discover",
         f"workflow dir: {result.output_dir}",
+        (
+            "discover report: "
+            f"{result.discover_run.report.artifact_paths.discover_report_path}"
+        ),
         f"confirmed sources: {result.confirmed_source_count}",
         f"workday sources (manual review): {_discover_workday_manual_review_count(result.discover_run.report)}",
         f"collected sources: {len(result.collected_sources)}{collect_suffix}",
@@ -1156,9 +2036,21 @@ def render_run_report(
     if result.label is not None:
         lines.insert(4, f"label: {result.label}")
     if result.session_result.selection_scope is not None:
-        lines.insert(5 if result.label is not None else 4, f"session scope: {_describe_selection_scope(result.session_result.selection_scope)}")
+        scope_lines = [
+            f"session scope: {_describe_selection_scope(result.session_result.selection_scope)}"
+        ]
+        scope_lines.extend(_selection_scope_detail_lines(result.session_result.selection_scope))
+        insert_at = 5 if result.label is not None else 4
+        lines[insert_at:insert_at] = scope_lines
     if result.open_requested:
         lines.append(f"open executor: {result.executor_mode or 'browser_stub'}")
+    if result.discover_run.report.has_search_failures:
+        issue_count = sum(
+            1
+            for search_result in result.discover_run.report.search_results
+            if search_result.status in {"provider_anomaly", "parse_failure", "fetch_failure"}
+        )
+        lines.append(f"search issues: {issue_count} (see discover report)")
 
     if result.import_result is not None and result.import_result.errors:
         lines.append("import errors:")
@@ -1205,6 +2097,42 @@ def render_run_error_report(paths: WorkspacePaths, error: str) -> str:
     return "\n".join(lines)
 
 
+def render_run_discover_failure_report(
+    paths: WorkspacePaths,
+    result: DiscoverRun,
+) -> str:
+    artifact_paths = result.report.artifact_paths
+    assert artifact_paths is not None
+    lines = [
+        "jobs_ai run",
+        f"database path: {paths.database_path}",
+        "status: failed",
+        "error: discovery search failed before collection, import, or session start",
+        f"query: {result.report.query}",
+        f"workflow dir: {artifact_paths.output_dir}",
+        f"discover report: {artifact_paths.discover_report_path}",
+        f"confirmed sources: {result.report.confirmed_count}",
+    ]
+    if artifact_paths.search_artifact_dir is not None:
+        lines.append(f"search artifacts dir: {artifact_paths.search_artifact_dir}")
+    lines.append("search query issues:")
+    lines.extend(
+        _format_search_execution_line(search_result)
+        for search_result in result.report.search_results
+        if search_result.status in {"provider_anomaly", "parse_failure", "fetch_failure"}
+    )
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example(
+                f'discover "{result.report.query}" --capture-search-artifacts'
+            ),
+        ),
+    )
+    return "\n".join(lines)
+
+
 def build_run_report_payload(
     paths: WorkspacePaths,
     result: RunWorkflowResult,
@@ -1215,17 +2143,17 @@ def build_run_report_payload(
         "command": "jobs_ai run",
         "database_path": str(paths.database_path),
         "query": result.query,
+        "intake_mode": result.intake_mode,
         "workflow_dir": str(result.output_dir),
         "label": result.label,
         "confirmed_source_count": result.confirmed_source_count,
-        "workday_manual_review_count": _discover_workday_manual_review_count(result.discover_run.report),
         "collected_source_count": len(result.collected_sources),
         "collect_limit": result.collect_limit,
         "imported_jobs_count": result.imported_jobs_count,
-        "import_batch_id": (
-            result.import_result.batch_id
-            if result.import_result is not None
-            else (result.discover_run.report.run_id or result.output_dir.name)
+        "import_batch_id": result.import_result.batch_id if result.import_result is not None else (
+            result.discover_run.report.run_id
+            if result.discover_run is not None
+            else (result.collect_run.report.run_id if result.collect_run is not None else result.output_dir.name)
         ),
         "manifest_path": str(result.manifest_path),
         "selected_jobs_count": result.session_result.selected_count,
@@ -1249,6 +2177,11 @@ def build_run_report_payload(
             for item in _unique_run_resume_items(result)
         ],
     }
+    if result.discover_run is not None:
+        payload["discover_report_path"] = str(result.discover_run.report.artifact_paths.discover_report_path)
+        payload["workday_manual_review_count"] = _discover_workday_manual_review_count(result.discover_run.report)
+    if result.registry_collect_result is not None:
+        payload["registry_verified_source_count"] = result.registry_verified_source_count
     if result.import_result is not None:
         payload["import_errors"] = list(result.import_result.errors)
     if show_portal_hints:
@@ -1289,9 +2222,11 @@ def render_preflight_report(manifest: SessionManifest) -> str:
     if manifest.label is not None:
         lines.insert(3, f"label: {manifest.label}")
     if manifest.selection_scope is not None:
-        lines.insert(3, f"selection scope: {_describe_selection_scope(manifest.selection_scope)}")
+        scope_lines = [f"selection scope: {_describe_selection_scope(manifest.selection_scope)}"]
         if manifest.selection_scope.source_query is not None:
-            lines.insert(4, f"source query: {manifest.selection_scope.source_query}")
+            scope_lines.append(f"source query: {manifest.selection_scope.source_query}")
+        scope_lines.extend(_selection_scope_detail_lines(manifest.selection_scope))
+        lines[3:3] = scope_lines
     if not manifest.items:
         lines.append("preview: empty manifest")
         _append_guidance(lines, "next:", (_cli_example("export-session"),))
@@ -1511,6 +2446,64 @@ def render_application_assist_error_report(manifest_path: Path, error: str) -> s
         f"error: {error}",
     ]
     _append_guidance(lines, "next:", (_cli_example(f"preflight {manifest_path}"),))
+    return "\n".join(lines)
+
+
+def render_application_prefill_report(
+    result: ApplicationPrefillResult,
+) -> str:
+    lines = [
+        "jobs_ai application-assist",
+        f"manifest path: {result.manifest_path}",
+        "mode: review-first prefill",
+        f"launch order: {result.launch_order}",
+        (
+            "job: "
+            f"{_format_launch_dry_run_text(result.company, fallback='<missing company>')} | "
+            f"{_format_launch_dry_run_text(result.title, fallback='<missing role title>')}"
+        ),
+        f"portal: {result.portal_label}",
+        f"portal support: {result.support_level}",
+        f"browser backend: {result.browser_backend}",
+        f"applicant profile: {result.applicant_profile_path}",
+        f"original apply_url: {result.original_apply_url}",
+        f"opened url: {result.opened_url}",
+        f"recommended resume: {_format_manifest_selection(result.recommended_resume_variant, fallback='<missing>')}",
+        (
+            "recommended snippet: "
+            f"{_format_manifest_selection(result.recommended_profile_snippet, fallback='<missing>')}"
+        ),
+        f"resume path: {result.resolved_resume_path or 'unresolved'}",
+        f"page title: {result.page_title or '<unknown>'}",
+        f"status: {result.status}",
+        f"STOPPED BEFORE SUBMIT: {'yes' if result.stopped_before_submit else 'no'}",
+    ]
+    if result.filled_fields:
+        lines.append("filled fields:")
+        lines.extend(
+            f"- {field.action_type} | {field.field_label} | {field.value}"
+            for field in result.filled_fields
+        )
+    else:
+        lines.append("filled fields: none")
+    if result.skipped_fields:
+        lines.append("skipped fields:")
+        lines.extend(
+            f"- {field.field_label}: {field.reason}"
+            for field in result.skipped_fields
+        )
+    if result.unresolved_required_fields:
+        lines.append("unresolved required fields:")
+        lines.extend(f"- {field_label}" for field_label in result.unresolved_required_fields)
+    else:
+        lines.append("unresolved required fields: none")
+    if result.submit_controls:
+        lines.append("submit controls detected:")
+        lines.extend(f"- {label}" for label in result.submit_controls)
+    if result.notes:
+        lines.append("notes:")
+        lines.extend(f"- {note}" for note in result.notes)
+    lines.append("next: review the browser page manually and click submit yourself if everything looks correct.")
     return "\n".join(lines)
 
 
@@ -1838,6 +2831,8 @@ def _import_summary_next_commands(import_summary) -> tuple[str, ...]:
 def _describe_selection_scope(selection_scope: SessionSelectionScope) -> str:
     if selection_scope.batch_id is not None:
         return f"batch {selection_scope.batch_id}"
+    if selection_scope.source_query is not None:
+        return f'query "{selection_scope.source_query}" across global new-job pool'
     return "global new-job pool"
 
 
@@ -1848,7 +2843,33 @@ def _selection_scope_payload(selection_scope: SessionSelectionScope | None) -> d
         "batch_id": selection_scope.batch_id,
         "source_query": selection_scope.source_query,
         "import_source": selection_scope.import_source,
+        "selection_mode": selection_scope.selection_mode,
+        "refresh_batch_id": selection_scope.refresh_batch_id,
     }
+
+
+def _selection_scope_detail_lines(selection_scope: SessionSelectionScope) -> tuple[str, ...]:
+    lines: list[str] = []
+    selection_mode_detail = _selection_mode_detail(selection_scope.selection_mode)
+    if selection_mode_detail is not None:
+        lines.append(f"selection source: {selection_mode_detail}")
+    if (
+        selection_scope.refresh_batch_id is not None
+        and selection_scope.refresh_batch_id != selection_scope.batch_id
+    ):
+        lines.append(f"refresh batch id: {selection_scope.refresh_batch_id}")
+    return tuple(lines)
+
+
+def _selection_mode_detail(selection_mode: str | None) -> str | None:
+    if selection_mode == "registry_new_imports":
+        return "newly imported jobs from this registry refresh"
+    if selection_mode == "registry_refresh_empty_reused_existing":
+        return (
+            "existing eligible jobs reused from prior imports because this registry "
+            "refresh imported 0 new jobs"
+        )
+    return None
 
 
 def _session_start_next_commands(

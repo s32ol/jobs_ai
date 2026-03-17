@@ -1,0 +1,10 @@
+# ATS-native tech starter list
+# Verified direct ATS roots collected on 2026-03-16.
+Box | https://boards.greenhouse.io/boxinc
+Speechify | https://boards.greenhouse.io/speechify
+Tech Holding | https://boards.greenhouse.io/techholding
+Offchain Labs | https://jobs.lever.co/offchainlabs
+Ro | https://jobs.lever.co/ro
+Caseware | https://jobs.lever.co/caseware
+Ramp | https://jobs.ashbyhq.com/ramp
+Vanta | https://jobs.ashbyhq.com/vanta

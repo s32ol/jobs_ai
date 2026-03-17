@@ -1,0 +1,14 @@
+# Legacy low-confidence starter list: generic company names and domains
+# Prefer ats-tech, ats-data-ai, ats-general-remote, or ats-startups for seeding.
+Robert Half | roberthalf.com
+Randstad | randstad.com
+Adecco | adecco.com
+ManpowerGroup | manpowergroup.com
+Insight Global | insightglobal.com
+TEKsystems | teksystems.com
+Kforce | kforce.com
+Hays | hays.com
+Accenture | accenture.com
+Deloitte | deloitte.com
+Cognizant | cognizant.com
+Infosys | infosys.com

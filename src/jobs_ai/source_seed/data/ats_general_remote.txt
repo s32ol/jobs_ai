@@ -1,0 +1,8 @@
+# ATS-native remote-leaning starter list
+# Remote availability changes over time; use this as a high-yield ATS seed set, not a guarantee.
+Box | https://boards.greenhouse.io/boxinc
+Speechify | https://boards.greenhouse.io/speechify
+Tech Holding | https://boards.greenhouse.io/techholding
+Ro | https://jobs.lever.co/ro
+Welocalize | https://jobs.lever.co/welocalize
+Climate Cabinet | https://boards.greenhouse.io/climatecabinet

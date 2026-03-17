@@ -14,6 +14,7 @@ class LaunchPreview:
     title: str
     location: str | None
     apply_url: str | None
+    portal_type: str | None
     source: str
     score: int
     resume_variant_key: str
@@ -29,11 +30,13 @@ def select_launch_preview(
     *,
     limit: int | None = None,
     ingest_batch_id: str | None = None,
+    query_text: str | None = None,
 ) -> tuple[LaunchPreview, ...]:
     recommendations = select_queue_recommendations(
         database_path,
         limit=limit,
         ingest_batch_id=ingest_batch_id,
+        query_text=query_text,
     )
     return tuple(_preview_from_recommendation(recommendation) for recommendation in recommendations)
 
@@ -46,6 +49,7 @@ def _preview_from_recommendation(recommendation: QueueRecommendation) -> LaunchP
         title=recommendation.title,
         location=recommendation.location,
         apply_url=recommendation.apply_url,
+        portal_type=recommendation.portal_type,
         source=recommendation.source,
         score=recommendation.score,
         resume_variant_key=recommendation.resume_variant_key,

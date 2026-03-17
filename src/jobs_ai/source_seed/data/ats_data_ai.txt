@@ -1,0 +1,9 @@
+# ATS-native data and AI starter list
+# Prefer direct ATS roots over generic company-name inference.
+Speechify | https://boards.greenhouse.io/speechify
+Ever | https://boards.greenhouse.io/ever
+Dun & Bradstreet | https://jobs.lever.co/dnb
+Welocalize | https://jobs.lever.co/welocalize
+OpenAI | https://jobs.ashbyhq.com/openai
+Pinecone | https://jobs.ashbyhq.com/pinecone
+Cohere | https://jobs.ashbyhq.com/cohere

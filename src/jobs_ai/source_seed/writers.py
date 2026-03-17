@@ -116,10 +116,15 @@ def _manual_review_item_payload(result: CompanySeedResult) -> dict[str, object]:
         "company": result.company_input.company,
         "domain": result.company_input.domain,
         "notes": result.company_input.notes,
+        "career_page_url": result.company_input.career_page_url,
         "reason_code": result.reason_code,
         "reason": result.reason,
         "suggested_next_action": result.suggested_next_action,
         "evidence": _evidence_payload(result.evidence),
+        "manual_review_sources": [
+            _manual_review_source_payload(source)
+            for source in result.manual_review_sources
+        ],
         "attempted_candidates": [
             _candidate_result_payload(candidate_result)
             for candidate_result in result.attempted_candidates
@@ -133,6 +138,7 @@ def _company_result_payload(result: CompanySeedResult) -> dict[str, object]:
         "company": result.company_input.company,
         "domain": result.company_input.domain,
         "notes": result.company_input.notes,
+        "career_page_url": result.company_input.career_page_url,
         "raw_value": result.company_input.raw_value,
         "outcome": result.outcome,
         "reason_code": result.reason_code,
@@ -140,6 +146,10 @@ def _company_result_payload(result: CompanySeedResult) -> dict[str, object]:
         "suggested_next_action": result.suggested_next_action,
         "confirmed_sources": list(result.confirmed_sources),
         "evidence": _evidence_payload(result.evidence),
+        "manual_review_sources": [
+            _manual_review_source_payload(source)
+            for source in result.manual_review_sources
+        ],
         "attempted_candidates": [
             _candidate_result_payload(candidate_result)
             for candidate_result in result.attempted_candidates
@@ -153,6 +163,7 @@ def _company_input_payload(company_input: CompanySeedInput) -> dict[str, object]
         "company": company_input.company,
         "domain": company_input.domain,
         "notes": company_input.notes,
+        "career_page_url": company_input.career_page_url,
         "raw_value": company_input.raw_value,
     }
 
@@ -171,6 +182,18 @@ def _candidate_result_payload(result: CandidateResult) -> dict[str, object]:
         "detected_company": result.detected_company,
         "confirmed_url": result.confirmed_url,
         "evidence": _evidence_payload(result.evidence),
+    }
+
+
+def _manual_review_source_payload(source) -> dict[str, object]:
+    return {
+        "source_url": source.source_url,
+        "portal_type": source.portal_type,
+        "reason_code": source.reason_code,
+        "reason": source.reason,
+        "suggested_next_action": source.suggested_next_action,
+        "detected_company": source.detected_company,
+        "evidence": _evidence_payload(source.evidence),
     }
 
 

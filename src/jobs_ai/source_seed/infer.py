@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
+from ..portal_support import build_portal_support, extract_portal_board_root_url
 from .models import CandidateConfidence, CompanySeedInput, SlugCandidate, SourceCandidate
 
 _LEADING_ARTICLES = frozenset({"the"})
@@ -68,6 +69,21 @@ def parse_company_input_line(index: int, raw_value: str) -> CompanySeedInput | N
         return None
 
     if "|" not in stripped:
+        if _looks_like_seed_target(stripped):
+            domain = _normalize_domain(stripped)
+            career_page_url = (
+                _normalize_career_page_url(stripped)
+                if _looks_like_career_page_url(stripped)
+                else None
+            )
+            return CompanySeedInput(
+                index=index,
+                raw_value=stripped,
+                company=_display_name_from_seed_target(stripped),
+                domain=domain,
+                notes=None,
+                career_page_url=career_page_url,
+            )
         company = _normalize_company_display(stripped)
         return CompanySeedInput(
             index=index,
@@ -75,11 +91,19 @@ def parse_company_input_line(index: int, raw_value: str) -> CompanySeedInput | N
             company=company,
             domain=None,
             notes=None,
+            career_page_url=None,
         )
 
     parts = [part.strip() for part in stripped.split("|")]
     company = _normalize_company_display(parts[0]) if parts else None
     domain = _normalize_domain(parts[1]) if len(parts) >= 2 and parts[1] else None
+    career_page_url = (
+        _normalize_career_page_url(parts[1])
+        if len(parts) >= 2 and _looks_like_career_page_url(parts[1])
+        else None
+    )
+    if company is None and len(parts) >= 2:
+        company = _display_name_from_seed_target(parts[1])
     notes = _normalize_notes(parts[2:]) if len(parts) >= 3 else None
     return CompanySeedInput(
         index=index,
@@ -87,6 +111,7 @@ def parse_company_input_line(index: int, raw_value: str) -> CompanySeedInput | N
         company=company,
         domain=domain,
         notes=notes,
+        career_page_url=career_page_url,
     )
 
 
@@ -255,6 +280,81 @@ def _normalize_domain(value: str | None) -> str | None:
     if ":" in host:
         host = host.split(":", 1)[0]
     return host or None
+
+
+def _normalize_career_page_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized_value = value.strip()
+    if not normalized_value:
+        return None
+    parse_target = normalized_value if "://" in normalized_value else f"https://{normalized_value}"
+    parsed = urlparse(parse_target)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None
+    return urlunparse(parsed._replace(fragment=""))
+
+
+def _looks_like_career_page_url(value: str) -> bool:
+    normalized_value = value.strip().lower()
+    if not normalized_value:
+        return False
+    return (
+        "://" in normalized_value
+        or "/" in normalized_value
+        or "career" in normalized_value
+        or "jobs" in normalized_value
+    )
+
+
+def _looks_like_seed_target(value: str) -> bool:
+    normalized_value = value.strip().lower()
+    if not normalized_value:
+        return False
+    if "://" in normalized_value or "/" in normalized_value:
+        return True
+    return "." in normalized_value and " " not in normalized_value
+
+
+def _display_name_from_seed_target(value: str | None) -> str | None:
+    normalized_value = _normalize_company_display(value)
+    if normalized_value is None:
+        return None
+
+    portal_support = build_portal_support(normalized_value)
+    if portal_support is not None:
+        if portal_support.portal_type == "workday":
+            return None
+        board_root = extract_portal_board_root_url(
+            normalized_value,
+            portal_type=portal_support.portal_type,
+        )
+        if board_root is not None:
+            parsed_board_root = urlparse(board_root)
+            path_segments = tuple(
+                segment
+                for segment in parsed_board_root.path.split("/")
+                if segment
+            )
+            if path_segments:
+                display_name = _display_name_from_slug(path_segments[0])
+                if display_name is not None:
+                    return display_name
+
+    label = primary_domain_label(normalized_value)
+    if label is None:
+        return None
+    return _display_name_from_slug(label)
+
+
+def _display_name_from_slug(value: str | None) -> str | None:
+    normalized_slug = _normalize_slug(value)
+    if normalized_slug is None:
+        return None
+    words = [segment.capitalize() for segment in normalized_slug.split("-") if segment]
+    if not words:
+        return None
+    return " ".join(words)
 
 
 def _normalize_ascii_text(value: str | None) -> str | None:

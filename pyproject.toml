@@ -9,6 +9,7 @@ description = "Pragmatic local job application exoskeleton for technical job sea
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "playwright>=1.53,<2.0",
     "pydantic>=2.9,<3.0",
     "typer>=0.12,<1.0",
 ]
@@ -21,3 +22,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"jobs_ai.source_seed" = ["data/*.txt"]
+"jobs_ai.sources" = ["data/*.txt"]

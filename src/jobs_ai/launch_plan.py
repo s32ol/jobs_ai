@@ -10,9 +10,11 @@ from .session_manifest import ManifestSelection, SessionManifest, SessionSelecti
 class LaunchPlanItem:
     manifest_index: int
     launch_order: int | None
+    job_id: int | None
     company: str | None
     title: str | None
     apply_url: str | None
+    portal_type: str | None
     recommended_resume_variant: ManifestSelection | None
     recommended_profile_snippet: ManifestSelection | None
     launchable: bool
@@ -46,9 +48,11 @@ def build_launch_plan(manifest: SessionManifest) -> LaunchPlan:
             LaunchPlanItem(
                 manifest_index=item.index,
                 launch_order=planned_order,
+                job_id=item.job_id,
                 company=item.company,
                 title=item.title,
                 apply_url=item.apply_url,
+                portal_type=item.portal_type,
                 recommended_resume_variant=item.recommended_resume_variant,
                 recommended_profile_snippet=item.recommended_profile_snippet,
                 launchable=launchable,

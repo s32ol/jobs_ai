@@ -63,6 +63,7 @@ def write_discover_artifacts(
         confirmed_sources_path=confirmed_sources_path,
         manual_review_sources_path=manual_review_sources_path,
         discover_report_path=discover_report_path,
+        search_artifact_dir=_search_artifact_dir(run.report.search_results),
     )
     finalized_run = run.with_finalization(
         artifact_paths=artifact_paths,
@@ -78,6 +79,8 @@ def write_discover_artifacts(
 def _run_report_payload(report: DiscoverRunReport) -> dict[str, object]:
     return {
         "run_id": report.run_id,
+        "status": "failed" if report.has_fatal_search_failure else "success",
+        "search_failure": report.has_fatal_search_failure,
         "created_at": report.created_at,
         "finished_at": report.finished_at,
         "label": report.label,
@@ -136,6 +139,11 @@ def _artifact_paths_payload(
             else None
         ),
         "discover_report_path": str(artifact_paths.discover_report_path),
+        "search_artifact_dir": (
+            str(artifact_paths.search_artifact_dir)
+            if artifact_paths.search_artifact_dir is not None
+            else None
+        ),
     }
 
 
@@ -145,8 +153,27 @@ def _search_result_payload(result: SearchExecutionResult) -> dict[str, object]:
         "site_filter": result.plan.site_filter,
         "search_text": result.plan.search_text,
         "search_url": result.plan.search_url,
+        "status": result.status,
         "hit_count": result.hit_count,
+        "attempt_count": result.attempt_count,
         "error": result.error,
+        "evidence": _evidence_payload(result.evidence),
+        "raw_artifact_paths": [str(path) for path in result.raw_artifact_paths],
+        "attempts": [
+            {
+                "attempt_number": attempt.attempt_number,
+                "status": attempt.status,
+                "hit_count": attempt.hit_count,
+                "error": attempt.error,
+                "evidence": _evidence_payload(attempt.evidence),
+                "raw_artifact_path": (
+                    str(attempt.raw_artifact_path)
+                    if attempt.raw_artifact_path is not None
+                    else None
+                ),
+            }
+            for attempt in result.attempts
+        ],
     }
 
 
@@ -264,3 +291,13 @@ def _write_text_lines(output_path: Path, values: tuple[str, ...]) -> None:
 def _remove_if_exists(output_path: Path) -> None:
     if output_path.exists():
         output_path.unlink()
+
+
+def _search_artifact_dir(
+    search_results: tuple[SearchExecutionResult, ...],
+) -> Path | None:
+    for result in search_results:
+        if not result.raw_artifact_paths:
+            continue
+        return result.raw_artifact_paths[0].parent
+    return None

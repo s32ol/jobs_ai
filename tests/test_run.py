@@ -20,8 +20,12 @@ from jobs_ai.application_tracking import get_application_status
 from jobs_ai.cli import app
 from jobs_ai.collect.fetch import FetchError, FetchRequest, FetchResponse
 from jobs_ai.db import connect_database, initialize_schema, insert_job
+from jobs_ai.discover.cli import run_discover_command
 from jobs_ai.discover.search import build_search_plans
+from jobs_ai.run_workflow import DiscoverSearchWorkflowError, run_operator_workflow
 from jobs_ai.session_manifest import load_session_manifest
+from jobs_ai.sources.registry import register_verified_source
+from jobs_ai.workspace import build_workspace_paths
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "collect"
 RUNNER = CliRunner()
@@ -70,11 +74,70 @@ def _search_results_html(*target_urls: str) -> str:
     return f"<!doctype html><html><body>{links}</body></html>"
 
 
+def _duckduckgo_challenge_html(query: str = "python backend engineer remote") -> str:
+    return (
+        "<!doctype html><html><head><title>DuckDuckGo</title></head><body>"
+        '<form id="challenge-form" action="/anomaly.js">'
+        '<div class="anomaly-modal">Unfortunately, bots use DuckDuckGo too.</div>'
+        f"<div>{query}</div>"
+        "</form></body></html>"
+    )
+
+
+def _duckduckgo_zero_results_html(query: str = "python backend engineer remote") -> str:
+    return (
+        "<!doctype html><html><head><title>DuckDuckGo</title></head><body>"
+        f"<div>No results found for {query}</div>"
+        "</body></html>"
+    )
+
+
 def _empty_search_payloads(search_plans) -> dict[str, str]:
     return {
-        plan.search_url: "<html><body></body></html>"
+        plan.search_url: _duckduckgo_zero_results_html(plan.search_text)
         for plan in search_plans
     }
+
+
+def _insert_job_with_status(
+    connection,
+    *,
+    source: str,
+    company: str,
+    title: str,
+    location: str,
+    apply_url: str,
+    status: str = "new",
+    raw_payload: dict[str, object] | None = None,
+    portal_type: str | None = None,
+    ingest_batch_id: str | None = None,
+    source_query: str | None = None,
+) -> int:
+    job_id = insert_job(
+        connection,
+        {
+            "source": source,
+            "source_job_id": None,
+            "company": company,
+            "title": title,
+            "location": location,
+            "apply_url": apply_url,
+            "portal_type": portal_type,
+            "salary_text": None,
+            "posted_at": None,
+            "found_at": "2026-03-13T08:00:00Z",
+            "ingest_batch_id": ingest_batch_id,
+            "source_query": source_query,
+            "import_source": None,
+            "raw_json": json.dumps(raw_payload or {}, ensure_ascii=True),
+        },
+    )
+    if status != "new":
+        connection.execute(
+            "UPDATE jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, job_id),
+        )
+    return job_id
 
 
 class RunCommandTest(unittest.TestCase):
@@ -107,6 +170,7 @@ class RunCommandTest(unittest.TestCase):
                                 "morning batch",
                                 "--out-dir",
                                 "custom-bundle",
+                                "--capture-search-artifacts",
                             ],
                             env=env,
                         )
@@ -125,10 +189,234 @@ class RunCommandTest(unittest.TestCase):
                     "label": "morning batch",
                     "open_urls": True,
                     "executor_mode": "noop",
+                    "capture_search_artifacts": True,
+                    "use_registry": False,
                 },
             )
             self.assertEqual(render_report.call_count, 1)
             self.assertTrue(render_report.call_args.kwargs["show_portal_hints"])
+
+    def test_cli_run_use_registry_skips_discovery_and_filters_session_by_query(self) -> None:
+        query = "analytics engineer san jose"
+        fetcher = _mapping_fetcher(
+            {
+                "https://boards.greenhouse.io/acme": _fixture_text("greenhouse_board.html"),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+            register_verified_source(
+                database_path,
+                source_url="https://boards.greenhouse.io/acme/jobs/12345?gh_src=linkedin",
+                company="Acme Data",
+                label="Acme Data",
+                provenance="fixture",
+                verification_reason_code="fixture",
+                verification_reason="fixture",
+            )
+
+            with patch("jobs_ai.workspace.discover_project_root", return_value=project_root):
+                with patch("jobs_ai.run_workflow.fetch_text", side_effect=fetcher):
+                    with patch("jobs_ai.run_workflow.run_discover_command") as discover_command:
+                        result = RUNNER.invoke(
+                            app,
+                            [
+                                "run",
+                                query,
+                                "--use-registry",
+                                "--limit",
+                                "5",
+                                "--out-dir",
+                                "registry-operator",
+                            ],
+                            env=env,
+                        )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("intake mode: registry", result.stdout)
+            self.assertIn("registry sources selected: 1", result.stdout)
+            self.assertIn("imported jobs: 2", result.stdout)
+            self.assertIn("selected jobs: 1", result.stdout)
+            self.assertIn(
+                "selection source: newly imported jobs from this registry refresh",
+                result.stdout,
+            )
+            self.assertFalse(discover_command.called)
+
+            workflow_dir = project_root / "registry-operator"
+            self.assertTrue((workflow_dir / "run_report.json").exists())
+            self.assertTrue((workflow_dir / "leads.import.json").exists())
+
+            manifest_files = sorted(
+                workflow_dir.glob("launch-preview-session-*.json")
+            )
+            self.assertEqual(len(manifest_files), 1)
+            manifest = load_session_manifest(manifest_files[0])
+            self.assertEqual(manifest.item_count, 1)
+            self.assertIsNotNone(manifest.selection_scope)
+            assert manifest.selection_scope is not None
+            self.assertIsNotNone(manifest.selection_scope.batch_id)
+            self.assertEqual(manifest.selection_scope.source_query, query)
+            self.assertEqual(manifest.selection_scope.selection_mode, "registry_new_imports")
+            self.assertEqual(
+                manifest.selection_scope.refresh_batch_id,
+                manifest.selection_scope.batch_id,
+            )
+            self.assertEqual(manifest.items[0].title, "Analytics Engineer")
+
+    def test_cli_run_use_registry_reuses_existing_jobs_when_refresh_imports_zero(self) -> None:
+        query = "analytics engineer san jose"
+        fetcher = _mapping_fetcher(
+            {
+                "https://boards.greenhouse.io/acme": _fixture_text("greenhouse_board.html"),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+            register_verified_source(
+                database_path,
+                source_url="https://boards.greenhouse.io/acme",
+                company="Acme Data",
+                label="Acme Data",
+                provenance="fixture",
+                verification_reason_code="fixture",
+                verification_reason="fixture",
+            )
+
+            with closing(connect_database(database_path)) as connection:
+                _insert_job_with_status(
+                    connection,
+                    source="greenhouse",
+                    company="Acme Data",
+                    title="Data Engineer",
+                    location="Remote",
+                    apply_url="https://boards.greenhouse.io/acme/jobs/12345",
+                    portal_type="greenhouse",
+                    raw_payload={"description": "Python pipelines"},
+                )
+                matching_job_id = _insert_job_with_status(
+                    connection,
+                    source="greenhouse",
+                    company="Acme Data",
+                    title="Analytics Engineer",
+                    location="San Jose, CA",
+                    apply_url="https://boards.greenhouse.io/acme/jobs/98765",
+                    portal_type="greenhouse",
+                    raw_payload={"description": "Looker dashboards"},
+                )
+                _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Past Applications Co",
+                    title="Analytics Engineer",
+                    location="San Jose, CA",
+                    apply_url="https://example.com/jobs/past-analytics",
+                    status="opened",
+                    raw_payload={"description": "already opened"},
+                )
+                connection.commit()
+
+            with patch("jobs_ai.workspace.discover_project_root", return_value=project_root):
+                with patch("jobs_ai.run_workflow.fetch_text", side_effect=fetcher):
+                    with patch("jobs_ai.run_workflow.run_discover_command") as discover_command:
+                        result = RUNNER.invoke(
+                            app,
+                            [
+                                "run",
+                                query,
+                                "--use-registry",
+                                "--limit",
+                                "5",
+                                "--out-dir",
+                                "registry-operator",
+                            ],
+                            env=env,
+                        )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("intake mode: registry", result.stdout)
+            self.assertIn("imported jobs: 0", result.stdout)
+            self.assertIn("selected jobs: 1", result.stdout)
+            self.assertIn(
+                (
+                    "selection source: existing eligible jobs reused from prior imports "
+                    "because this registry refresh imported 0 new jobs"
+                ),
+                result.stdout,
+            )
+            self.assertFalse(discover_command.called)
+
+            manifest_files = sorted(
+                (project_root / "registry-operator").glob("launch-preview-session-*.json")
+            )
+            self.assertEqual(len(manifest_files), 1)
+            manifest = load_session_manifest(manifest_files[0])
+            self.assertEqual(manifest.item_count, 1)
+            self.assertIsNotNone(manifest.selection_scope)
+            assert manifest.selection_scope is not None
+            self.assertIsNone(manifest.selection_scope.batch_id)
+            self.assertEqual(manifest.selection_scope.source_query, query)
+            self.assertEqual(
+                manifest.selection_scope.selection_mode,
+                "registry_refresh_empty_reused_existing",
+            )
+            self.assertIsNotNone(manifest.selection_scope.refresh_batch_id)
+            self.assertEqual(manifest.items[0].job_id, matching_job_id)
+            self.assertEqual(manifest.items[0].title, "Analytics Engineer")
+
+    def test_run_operator_workflow_aborts_before_follow_on_steps_when_discovery_fails(self) -> None:
+        query = "python backend engineer remote"
+        search_plans = build_search_plans(query)
+        fatal_fetcher = _mapping_fetcher(
+            {
+                plan.search_url: _duckduckgo_challenge_html(plan.search_text)
+                for plan in search_plans
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            project_root.mkdir(parents=True, exist_ok=True)
+            paths = build_workspace_paths(Path("data/jobs_ai.db"), project_root=project_root)
+
+            with patch("jobs_ai.discover.search.SEARCH_RETRY_DELAYS_SECONDS", (0.0, 0.0)):
+                fatal_run = run_discover_command(
+                    paths,
+                    query=query,
+                    limit=20,
+                    out_dir=project_root / "operator-run",
+                    label="fatal-discover",
+                    timeout_seconds=5.0,
+                    report_only=False,
+                    collect=False,
+                    import_results=False,
+                    capture_search_artifacts=True,
+                    fetcher=fatal_fetcher,
+                )
+
+            with patch("jobs_ai.run_workflow.run_discover_command", return_value=fatal_run):
+                with patch("jobs_ai.run_workflow.run_collect_command") as collect_command:
+                    with patch("jobs_ai.run_workflow.start_session") as start_session:
+                        with self.assertRaises(DiscoverSearchWorkflowError):
+                            run_operator_workflow(
+                                paths,
+                                query=query,
+                                session_limit=5,
+                                out_dir=project_root / "operator-run",
+                                label="fatal-discover",
+                                capture_search_artifacts=True,
+                            )
+
+            self.assertFalse(collect_command.called)
+            self.assertFalse(start_session.called)
 
     def test_cli_run_end_to_end_offline_and_session_mark_updates_statuses(self) -> None:
         query = "backend engineer remote"

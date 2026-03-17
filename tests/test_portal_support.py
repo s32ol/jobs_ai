@@ -32,6 +32,14 @@ class PortalSupportTest(unittest.TestCase):
             "greenhouse",
         )
         self.assertEqual(
+            detect_portal_type("https://job-boards.eu.greenhouse.io/acme/jobs/12345"),
+            "greenhouse",
+        )
+        self.assertEqual(
+            detect_portal_type("https://boards.eu.greenhouse.io/acme?gh_jid=12345"),
+            "greenhouse",
+        )
+        self.assertEqual(
             detect_portal_type("https://jobs.lever.co/acme/abcdef?lever-source=LinkedIn"),
             "lever",
         )
@@ -75,6 +83,23 @@ class PortalSupportTest(unittest.TestCase):
         self.assertEqual(
             portal_support.company_apply_url,
             "https://boards.greenhouse.io/acme/jobs/12345",
+        )
+
+    def test_build_portal_support_preserves_regional_greenhouse_hosts(self) -> None:
+        portal_support = build_portal_support(
+            "https://boards.eu.greenhouse.io/parloa?gh_jid=4694390101&utm_source=linkedin"
+        )
+
+        self.assertIsNotNone(portal_support)
+        assert portal_support is not None
+        self.assertEqual(portal_support.portal_type, "greenhouse")
+        self.assertEqual(
+            portal_support.normalized_apply_url,
+            "https://boards.eu.greenhouse.io/parloa?gh_jid=4694390101",
+        )
+        self.assertEqual(
+            portal_support.company_apply_url,
+            "https://boards.eu.greenhouse.io/parloa/jobs/4694390101",
         )
 
     def test_build_portal_support_normalizes_lever_tracking_params(self) -> None:
@@ -144,6 +169,16 @@ class PortalSupportTest(unittest.TestCase):
     def test_extract_portal_board_root_url_normalizes_supported_direct_job_links(self) -> None:
         self.assertEqual(
             extract_portal_board_root_url("https://boards.greenhouse.io/acme/jobs/12345?gh_src=linkedin"),
+            "https://boards.greenhouse.io/acme",
+        )
+        self.assertEqual(
+            extract_portal_board_root_url("https://job-boards.eu.greenhouse.io/parloa/jobs/4694390101"),
+            "https://job-boards.eu.greenhouse.io/parloa",
+        )
+        self.assertEqual(
+            extract_portal_board_root_url(
+                "https://boards.greenhouse.io/embed/job_board?for=acme&b=https%3A%2F%2Fwww.acme.example"
+            ),
             "https://boards.greenhouse.io/acme",
         )
         self.assertEqual(

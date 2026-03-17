@@ -131,9 +131,15 @@ def extract_portal_board_root_url(
         return None
 
     if portal_support.portal_type == "greenhouse":
-        if parsed_url.netloc.lower() not in {"boards.greenhouse.io", "job-boards.greenhouse.io"}:
+        if not _is_greenhouse_hostname(parsed_url.netloc.lower()):
             return None
-        board_path = f"/{segments[0]}"
+        if _greenhouse_embed_path(parsed_url.path):
+            board_slug = _first_query_value(parsed_url.query, "for")
+            if board_slug is None:
+                return None
+            board_path = f"/{board_slug}"
+        else:
+            board_path = f"/{segments[0]}"
     elif portal_support.portal_type == "lever":
         if parsed_url.netloc.lower() != "jobs.lever.co":
             return None
@@ -296,7 +302,7 @@ def _is_greenhouse_apply_url(parsed_url) -> bool:
     netloc = parsed_url.netloc.lower()
     if _has_query_key(parsed_url.query, "gh_jid"):
         return True
-    if netloc not in {"boards.greenhouse.io", "job-boards.greenhouse.io"}:
+    if not _is_greenhouse_hostname(netloc):
         return False
     return len(_path_segments(parsed_url.path)) >= 1
 
@@ -347,9 +353,21 @@ def _has_query_key(query: str, key: str) -> bool:
     return any(query_key.lower() == normalized_key for query_key, _ in parse_qsl(query, keep_blank_values=True))
 
 
+def _is_greenhouse_hostname(hostname: str) -> bool:
+    labels = [label for label in hostname.lower().split(".") if label]
+    if len(labels) < 3 or labels[-2:] != ["greenhouse", "io"]:
+        return False
+    return labels[0] in {"boards", "job-boards"}
+
+
 def _greenhouse_job_path(path: str) -> bool:
     segments = _path_segments(path.lower())
     return len(segments) >= 2 and segments[1] == "jobs"
+
+
+def _greenhouse_embed_path(path: str) -> bool:
+    segments = _path_segments(path.lower())
+    return len(segments) >= 2 and segments[0] == "embed" and segments[1] == "job_board"
 
 
 def _ashby_job_path(path: str) -> bool:

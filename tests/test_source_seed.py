@@ -81,12 +81,32 @@ class SourceSeedTest(unittest.TestCase):
         self.assertEqual(parsed[0].company, "OpenAI")
         self.assertEqual(parsed[0].domain, "www.openai.com")
         self.assertEqual(parsed[0].notes, "priority")
+        self.assertEqual(parsed[0].career_page_url, "https://www.openai.com/careers")
         self.assertEqual(parsed[1].index, 2)
         self.assertEqual(parsed[1].company, "ACME, Inc.")
         self.assertIsNone(parsed[1].domain)
         self.assertEqual(parsed[2].index, 3)
         self.assertEqual(parsed[2].company, "Northwind Talent")
         self.assertEqual(parsed[2].domain, "northwind.com")
+        self.assertIsNone(parsed[2].career_page_url)
+
+    def test_parse_company_inputs_supports_bare_domains_and_direct_portal_urls(self) -> None:
+        parsed = parse_company_inputs(
+            [
+                "openai.com",
+                "https://boards.greenhouse.io/acme/jobs/12345?gh_src=linkedin",
+                "https://wd5.myworkdayjobs.com/en-US/External/job/Remote/R12345",
+            ]
+        )
+
+        self.assertEqual(len(parsed), 3)
+        self.assertEqual(parsed[0].company, "Openai")
+        self.assertEqual(parsed[0].domain, "openai.com")
+        self.assertIsNone(parsed[0].career_page_url)
+        self.assertEqual(parsed[1].company, "Acme")
+        self.assertEqual(parsed[1].career_page_url, "https://boards.greenhouse.io/acme/jobs/12345?gh_src=linkedin")
+        self.assertIsNone(parsed[2].company)
+        self.assertEqual(parsed[2].career_page_url, "https://wd5.myworkdayjobs.com/en-US/External/job/Remote/R12345")
 
     def test_infer_slug_candidates_are_conservative_and_deterministic(self) -> None:
         company_input = CompanySeedInput(
@@ -188,6 +208,81 @@ class SourceSeedTest(unittest.TestCase):
         self.assertEqual(result.reason_code, "greenhouse_parse_ambiguous")
         self.assertIn("manual review required", result.reason)
 
+    def test_verify_source_candidate_keeps_direct_ashby_blocked_result_as_manual_review(self) -> None:
+        company_input = CompanySeedInput(
+            1,
+            "Signal Ops | https://jobs.ashbyhq.com/signalops",
+            "Signal Ops",
+            "jobs.ashbyhq.com",
+            None,
+            career_page_url="https://jobs.ashbyhq.com/signalops",
+        )
+        candidate = SourceCandidate(
+            1,
+            "ashby",
+            "signalops",
+            "https://jobs.ashbyhq.com/signalops",
+            "career_page",
+            "high",
+        )
+
+        result = verify_source_candidate(
+            company_input,
+            candidate,
+            timeout_seconds=10.0,
+            fetcher=_mapping_fetcher(
+                {
+                    candidate.url: _response(
+                        candidate.url,
+                        "<!doctype html><html><body>Access denied</body></html>",
+                        status_code=403,
+                    )
+                }
+            ),
+        )
+
+        self.assertEqual(result.outcome, "manual_review")
+        self.assertEqual(result.reason_code, "ashby_blocked_or_access_denied")
+        self.assertIn("inconclusive", result.reason)
+        assert result.evidence is not None
+        self.assertEqual(result.evidence.final_url, candidate.url)
+
+    def test_verify_source_candidate_keeps_invalid_direct_ashby_url_as_skipped(self) -> None:
+        company_input = CompanySeedInput(
+            1,
+            "Signal Ops | https://jobs.ashbyhq.com/definitely-not-real",
+            "Signal Ops",
+            "jobs.ashbyhq.com",
+            None,
+            career_page_url="https://jobs.ashbyhq.com/definitely-not-real",
+        )
+        candidate = SourceCandidate(
+            1,
+            "ashby",
+            "definitely-not-real",
+            "https://jobs.ashbyhq.com/definitely-not-real",
+            "career_page",
+            "high",
+        )
+
+        result = verify_source_candidate(
+            company_input,
+            candidate,
+            timeout_seconds=10.0,
+            fetcher=_mapping_fetcher(
+                {
+                    candidate.url: _response(
+                        candidate.url,
+                        "<!doctype html><html><body>Not found</body></html>",
+                        status_code=404,
+                    )
+                }
+            ),
+        )
+
+        self.assertEqual(result.outcome, "skipped")
+        self.assertEqual(result.reason_code, "http_error_status")
+
     def test_seed_source_handling_skips_fetch_failures_non_html_and_bad_input(self) -> None:
         fetch_failure_candidate = SourceCandidate(
             1,
@@ -253,6 +348,150 @@ class SourceSeedTest(unittest.TestCase):
         )
         self.assertEqual(run.report.skipped_count, 1)
         self.assertEqual(run.report.company_results[0].reason_code, "missing_company_name")
+
+    def test_run_source_seeding_can_discover_supported_board_from_career_page(self) -> None:
+        career_page_url = "https://acme.example/careers"
+        company_input = CompanySeedInput(
+            index=1,
+            raw_value="Acme Data | https://acme.example/careers",
+            company="Acme Data",
+            domain="acme.example",
+            notes=None,
+            career_page_url=career_page_url,
+        )
+
+        run = run_source_seeding(
+            (company_input,),
+            timeout_seconds=5.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=_mapping_fetcher(
+                {
+                    career_page_url: (
+                        "<!doctype html><html><body>"
+                        '<a href="https://boards.greenhouse.io/acme/jobs/12345">Open role</a>'
+                        "</body></html>"
+                    ),
+                    "https://boards.greenhouse.io/acme": _fixture_text("greenhouse_board.html"),
+                }
+            ),
+        )
+
+        self.assertEqual(run.confirmed_sources, ("https://boards.greenhouse.io/acme",))
+        attempted_candidates = run.report.company_results[0].attempted_candidates
+        self.assertEqual(attempted_candidates[0].candidate.slug_source, "career_page")
+
+    def test_run_source_seeding_can_confirm_direct_portal_url(self) -> None:
+        company_input = CompanySeedInput(
+            index=1,
+            raw_value="Acme Data | https://boards.greenhouse.io/acme/jobs/12345?gh_src=linkedin",
+            company="Acme Data",
+            domain="boards.greenhouse.io",
+            notes=None,
+            career_page_url="https://boards.greenhouse.io/acme/jobs/12345?gh_src=linkedin",
+        )
+
+        run = run_source_seeding(
+            (company_input,),
+            timeout_seconds=5.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=_mapping_fetcher(
+                {
+                    "https://boards.greenhouse.io/acme": _fixture_text("greenhouse_board.html"),
+                }
+            ),
+        )
+
+        self.assertEqual(run.confirmed_sources, ("https://boards.greenhouse.io/acme",))
+        attempted_candidates = run.report.company_results[0].attempted_candidates
+        self.assertEqual(len(attempted_candidates), 1)
+        self.assertEqual(attempted_candidates[0].candidate.url, "https://boards.greenhouse.io/acme")
+
+    def test_run_source_seeding_direct_ats_urls_outperform_generic_name_inference(self) -> None:
+        direct_run = run_source_seeding(
+            (
+                CompanySeedInput(
+                    index=1,
+                    raw_value="Acme Data | https://boards.greenhouse.io/alpha",
+                    company="Acme Data",
+                    domain="boards.greenhouse.io",
+                    notes=None,
+                    career_page_url="https://boards.greenhouse.io/alpha",
+                ),
+                CompanySeedInput(
+                    index=2,
+                    raw_value="Northwind Talent | https://jobs.lever.co/beta",
+                    company="Northwind Talent",
+                    domain="jobs.lever.co",
+                    notes=None,
+                    career_page_url="https://jobs.lever.co/beta",
+                ),
+                CompanySeedInput(
+                    index=3,
+                    raw_value="Signal Ops | https://jobs.ashbyhq.com/gamma",
+                    company="Signal Ops",
+                    domain="jobs.ashbyhq.com",
+                    notes=None,
+                    career_page_url="https://jobs.ashbyhq.com/gamma",
+                ),
+            ),
+            timeout_seconds=5.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=_mapping_fetcher(
+                {
+                    "https://boards.greenhouse.io/alpha": _fixture_text("greenhouse_board.html"),
+                    "https://jobs.lever.co/beta": _fixture_text("lever_board.html"),
+                    "https://jobs.ashbyhq.com/gamma": _fixture_text("ashby_board.html"),
+                }
+            ),
+        )
+        generic_run = run_source_seeding(
+            (
+                CompanySeedInput(1, "Acme Data", "Acme Data", None, None),
+                CompanySeedInput(2, "Northwind Talent", "Northwind Talent", None, None),
+                CompanySeedInput(3, "Signal Ops", "Signal Ops", None, None),
+            ),
+            timeout_seconds=5.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=_mapping_fetcher(
+                {
+                    "https://boards.greenhouse.io/alpha": _fixture_text("greenhouse_board.html"),
+                    "https://jobs.lever.co/beta": _fixture_text("lever_board.html"),
+                    "https://jobs.ashbyhq.com/gamma": _fixture_text("ashby_board.html"),
+                }
+            ),
+        )
+
+        self.assertEqual(direct_run.report.confirmed_count, 3)
+        self.assertEqual(direct_run.report.manual_review_count, 0)
+        self.assertEqual(generic_run.report.confirmed_count, 0)
+        self.assertEqual(generic_run.report.skipped_count, 3)
+        self.assertGreater(direct_run.report.confirmed_count, generic_run.report.confirmed_count)
+
+    def test_run_source_seeding_marks_workday_input_for_manual_review(self) -> None:
+        company_input = CompanySeedInput(
+            index=1,
+            raw_value="https://wd5.myworkdayjobs.com/en-US/External/job/Remote/R12345",
+            company=None,
+            domain="wd5.myworkdayjobs.com",
+            notes=None,
+            career_page_url="https://wd5.myworkdayjobs.com/en-US/External/job/Remote/R12345",
+        )
+
+        run = run_source_seeding(
+            (company_input,),
+            timeout_seconds=5.0,
+            created_at=FIXED_CREATED_AT,
+            fetcher=_mapping_fetcher({}),
+        )
+
+        result = run.report.company_results[0]
+        self.assertEqual(result.outcome, "manual_review")
+        self.assertEqual(result.reason_code, "workday_partial_support")
+        self.assertEqual(result.manual_review_sources[0].portal_type, "workday")
+        self.assertEqual(
+            result.manual_review_sources[0].source_url,
+            "https://wd5.myworkdayjobs.com/en-US/External/job/Remote/R12345",
+        )
 
     def test_write_source_seed_artifacts_are_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

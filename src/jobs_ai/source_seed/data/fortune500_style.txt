@@ -1,0 +1,14 @@
+# Legacy low-confidence starter list: generic company names and domains
+# Prefer ATS-native starters when you want confirmed Greenhouse, Lever, or Ashby roots.
+Walmart | walmart.com
+Target | target.com
+Costco | costco.com
+Home Depot | homedepot.com
+CVS Health | cvshealth.com
+UnitedHealth Group | unitedhealthgroup.com
+JPMorgan Chase | jpmorganchase.com
+Bank of America | bankofamerica.com
+FedEx | fedex.com
+Delta Air Lines | delta.com
+Capital One | capitalone.com
+General Motors | gm.com

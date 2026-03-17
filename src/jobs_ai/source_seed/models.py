@@ -17,6 +17,7 @@ class CompanySeedInput:
     company: str | None
     domain: str | None
     notes: str | None
+    career_page_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,12 +50,24 @@ class CandidateResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ManualReviewSourceHint:
+    source_url: str
+    portal_type: str | None
+    reason_code: str
+    reason: str
+    suggested_next_action: str | None = None
+    detected_company: str | None = None
+    evidence: OutcomeEvidence | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CompanySeedResult:
     company_input: CompanySeedInput
     outcome: SeedOutcome
     reason_code: str
     reason: str
     confirmed_sources: tuple[str, ...] = ()
+    manual_review_sources: tuple[ManualReviewSourceHint, ...] = ()
     attempted_candidates: tuple[CandidateResult, ...] = ()
     suggested_next_action: str | None = None
     evidence: OutcomeEvidence | None = None

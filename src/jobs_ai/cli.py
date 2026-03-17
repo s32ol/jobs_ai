@@ -10,6 +10,7 @@ from .collect.cli import run_collect_command
 from .discover.cli import run_discover_command
 from .source_seed.cli import run_seed_sources_command
 from .application_assist import build_application_assist
+from .application_prefill import run_application_prefill
 from .application_tracking import (
     APPLICATION_STATUSES,
     SESSION_MARK_APPLICATION_STATUSES,
@@ -34,7 +35,12 @@ from .launch_executor import (
 from .launch_preview import select_launch_preview
 from .launch_plan import build_launch_plan
 from .main import (
+    APPLY_DEFAULT_LIMIT,
+    APPLY_HARD_MAX_LIMIT,
+    render_apply_error_report,
+    render_apply_report,
     render_application_assist_error_report,
+    render_application_prefill_report,
     render_application_assist_report,
     render_collect_error_report,
     render_collect_report,
@@ -44,6 +50,7 @@ from .main import (
     render_application_tracking_list_report,
     render_application_tracking_mark_report,
     render_application_tracking_status_report,
+    render_run_discover_failure_report,
     render_run_error_report,
     render_run_json,
     render_run_report,
@@ -77,13 +84,64 @@ from .main import (
     render_session_start_report,
     render_seed_sources_error_report,
     render_seed_sources_report,
+    render_source_registry_add_report,
+    render_source_registry_collect_report,
+    render_source_registry_discover_ats_report,
+    render_source_registry_detect_sites_report,
+    render_source_registry_deactivate_report,
+    render_source_registry_expand_report,
+    render_source_registry_extract_jobposting_report,
+    render_source_registry_harvest_companies_report,
+    render_source_registry_import_report,
+    render_source_registry_list_report,
+    render_source_registry_seed_bulk_report,
+    render_source_registry_sync_report,
+    render_source_registry_verify_report,
     render_score_report,
     render_stats_json,
     render_stats_report,
     render_status_report,
+    run_apply_workflow,
 )
+from .prefill_browser import SUPPORTED_PREFILL_BROWSER_BACKENDS, create_prefill_browser_backend
 from .portal_support import build_portal_support
-from .run_workflow import DEFAULT_RUN_DISCOVER_LIMIT, run_operator_workflow
+from .run_workflow import DEFAULT_RUN_DISCOVER_LIMIT, DiscoverSearchWorkflowError, run_operator_workflow
+from .sources.detect_sites import (
+    detect_registry_sources_from_sites,
+    detect_sites_starter_help_text,
+)
+from .sources.jobposting_parser import (
+    DEFAULT_JOBPOSTING_MAX_REQUESTS_PER_SECOND,
+    DEFAULT_JOBPOSTING_TIMEOUT_SECONDS,
+    extract_jobposting_sources,
+)
+from .sources.company_harvester import (
+    DEFAULT_COMPANY_HARVEST_MAX_REQUESTS_PER_SECOND,
+    DEFAULT_COMPANY_HARVEST_TIMEOUT_SECONDS,
+    company_harvest_sources_help_text,
+    harvest_companies_from_sources,
+)
+from .sources.expand_registry import expand_registry_sources
+from .sources.discover_ats import (
+    DEFAULT_DISCOVER_ATS_LIMIT,
+    DEFAULT_DISCOVER_ATS_TIMEOUT_SECONDS,
+    SUPPORTED_DISCOVER_ATS_PROVIDERS,
+    discover_registry_ats_sources,
+)
+from .sources.registry import (
+    SOURCE_REGISTRY_STATUSES,
+    deactivate_registry_source,
+    import_registry_sources,
+    list_registry_sources,
+    register_source,
+    register_verified_source,
+    verify_registry_sources,
+)
+from .sources.seeding import (
+    seed_bulk_starter_help_text,
+    seed_registry_bulk,
+)
+from .sources.workflow import collect_registry_sources
 from .session_history import (
     DEFAULT_SESSION_RECENT_LIMIT,
     inspect_session,
@@ -103,11 +161,11 @@ app = typer.Typer(
     add_completion=False,
     help=(
         "Local CLI for the jobs_ai job-search exoskeleton.\n\n"
-        "Preferred daily flow: run -> manual apply -> session mark.\n\n"
+        "Preferred daily flow: run -> apply -> session mark.\n\n"
         "Preferred modular flow: discover --collect --import -> session start -> "
-        "manual apply -> session mark.\n\n"
+        "apply -> session mark.\n\n"
         "Advanced manual building blocks: score -> queue -> recommend -> "
-        "launch-preview -> export-session -> preflight -> application-assist -> "
+        "launch-preview -> apply -> export-session -> preflight -> application-assist -> "
         "launch-dry-run -> track -> stats -> maintenance."
     ),
 )
@@ -139,10 +197,18 @@ maintenance_app = typer.Typer(
         "Use maintenance backfill to upgrade older rows without rewriting existing history."
     )
 )
+sources_app = typer.Typer(
+    help=(
+        "Manage the durable ATS source registry.\n\n"
+        "Use sources harvest-companies/expand-registry/discover-ats/detect-sites/seed-bulk/add/import/verify to maintain confirmed board roots, "
+        "use sources extract-jobposting for schema.org JobPosting pages, then use sources collect or run --use-registry for the daily registry-first flow."
+    )
+)
 app.add_typer(db_app, name="db")
 app.add_typer(track_app, name="track")
 app.add_typer(session_app, name="session")
 app.add_typer(maintenance_app, name="maintenance")
+app.add_typer(sources_app, name="sources")
 
 
 def _load_runtime():
@@ -249,6 +315,19 @@ def run_command(
         "--out-dir",
         help="Optional workflow output directory for discover artifacts, collect artifacts, and the manifest.",
     ),
+    capture_search_artifacts: bool = typer.Option(
+        False,
+        "--capture-search-artifacts",
+        help="Save raw search HTML for anomalous or parse-failed search responses.",
+    ),
+    use_registry: bool = typer.Option(
+        False,
+        "--use-registry",
+        help=(
+            "Use the source registry as the primary intake path: collect/import from active "
+            "registry sources, then rank and freeze a session from jobs matching the query."
+        ),
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -270,7 +349,12 @@ def run_command(
             label=label,
             open_urls=open_,
             executor_mode=executor,
+            capture_search_artifacts=capture_search_artifacts,
+            use_registry=use_registry,
         )
+    except DiscoverSearchWorkflowError as exc:
+        typer.echo(render_run_discover_failure_report(paths, exc.discover_run))
+        raise typer.Exit(code=1)
     except ValueError as exc:
         typer.echo(render_run_error_report(paths, str(exc)))
         raise typer.Exit(code=1)
@@ -290,6 +374,45 @@ def run_command(
     )
     if result.import_result is not None and result.import_result.errors:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def apply(
+    query: str = typer.Argument(
+        ...,
+        help='Search query such as "python backend engineer".',
+    ),
+    limit: int = typer.Option(
+        APPLY_DEFAULT_LIMIT,
+        "--limit",
+        min=1,
+        help=(
+            "Maximum number of launchable matching jobs to open. "
+            f"Default {APPLY_DEFAULT_LIMIT}; hard max {APPLY_HARD_MAX_LIMIT}."
+        ),
+    ),
+    print_only: bool = typer.Option(
+        False,
+        "--print-only",
+        help="Print matching launchable jobs and apply URLs without opening a browser.",
+    ),
+) -> None:
+    """Open apply URLs for the current ranked query matches without exporting a session manifest."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    try:
+        result = run_apply_workflow(
+            paths.database_path,
+            query=query,
+            limit=limit,
+            print_only=print_only,
+        )
+    except ValueError as exc:
+        typer.echo(render_apply_error_report(paths, str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_apply_report(paths, result))
 
 
 @app.command()
@@ -370,6 +493,16 @@ def discover(
         "--import",
         help="After discovery, continue through collect and import the resulting leads into the database.",
     ),
+    capture_search_artifacts: bool = typer.Option(
+        False,
+        "--capture-search-artifacts",
+        help="Save raw search HTML for anomalous or parse-failed search responses.",
+    ),
+    add_to_registry: bool = typer.Option(
+        False,
+        "--add-to-registry",
+        help="Add confirmed ATS roots from this discover run into the durable source registry.",
+    ),
 ) -> None:
     """Modular upstream path: search ATS portals, confirm supported sources, and surface Workday for manual review."""
     settings, paths = _load_runtime()
@@ -387,11 +520,34 @@ def discover(
             report_only=report_only,
             collect=collect,
             import_results=import_results,
+            capture_search_artifacts=capture_search_artifacts,
         )
     except ValueError as exc:
         typer.echo(render_discover_error_report(str(exc)))
         raise typer.Exit(code=1)
     typer.echo(render_discover_report(run.report))
+    if add_to_registry and run.confirmed_sources:
+        initialize_schema(paths.database_path)
+        mutation_results = tuple(
+            register_verified_source(
+                paths.database_path,
+                source_url=result.confirmed_source,
+                portal_type=result.candidate.portal_type,
+                provenance=f'discover query "{run.report.query}"',
+                verification_reason_code="confirmed_via_discover",
+                verification_reason=f'confirmed from discover query "{run.report.query}"',
+            )
+            for result in run.report.candidate_results
+            if result.outcome == "confirmed" and result.confirmed_source is not None
+        )
+        typer.echo(
+            render_source_registry_sync_report(
+                "jobs_ai discover registry sync",
+                mutation_results,
+            )
+        )
+    if run.report.has_fatal_search_failure:
+        raise typer.Exit(code=1)
     import_summary = run.report.import_summary
     if import_summary is not None and import_summary.executed and import_summary.errors:
         raise typer.Exit(code=1)
@@ -510,6 +666,11 @@ def seed_sources(
         "--report-only",
         help="Write only seed_report.json and skip confirmed_sources.txt plus manual_review_sources.json.",
     ),
+    add_to_registry: bool = typer.Option(
+        False,
+        "--add-to-registry",
+        help="Add confirmed ATS roots from this seed run into the durable source registry.",
+    ),
 ) -> None:
     """Infer and verify reusable ATS board-root sources from company inputs."""
     settings, paths = _load_runtime()
@@ -529,6 +690,32 @@ def seed_sources(
         typer.echo(render_seed_sources_error_report(str(exc)))
         raise typer.Exit(code=1)
     typer.echo(render_seed_sources_report(run.report))
+    if add_to_registry and run.confirmed_sources:
+        initialize_schema(paths.database_path)
+        mutation_results = []
+        for result in run.report.company_results:
+            if result.outcome != "confirmed":
+                continue
+            for confirmed_source in result.confirmed_sources:
+                mutation_results.append(
+                    register_verified_source(
+                        paths.database_path,
+                        source_url=confirmed_source,
+                        company=result.company_input.company,
+                        label=result.company_input.company,
+                        provenance=f'seed-sources input "{result.company_input.raw_value}"',
+                        verification_reason_code="confirmed_via_seed_sources",
+                        verification_reason=(
+                            f'confirmed from seed-sources input "{result.company_input.raw_value}"'
+                        ),
+                    )
+                )
+        typer.echo(
+            render_source_registry_sync_report(
+                "jobs_ai seed-sources registry sync",
+                tuple(mutation_results),
+            )
+        )
 
 
 @app.command("import")
@@ -765,6 +952,637 @@ def stats(
         if json_output
         else render_stats_report(paths, stats_result)
     )
+
+
+@sources_app.command("list")
+def sources_list(
+    status: list[str] = typer.Option(
+        None,
+        "--status",
+        help=f"Optional status filter. Allowed values: {', '.join(SOURCE_REGISTRY_STATUSES)}.",
+    ),
+) -> None:
+    """List durable ATS sources in the local registry."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    try:
+        entries = list_registry_sources(
+            paths.database_path,
+            statuses=status or None,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_list_report(paths, entries))
+
+
+@sources_app.command("add")
+def sources_add(
+    source_url: str = typer.Argument(..., help="Source URL to add to the registry."),
+    company: str | None = typer.Option(
+        None,
+        "--company",
+        help="Optional company name to attach to this source.",
+    ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        help="Optional operator label to attach to this source.",
+    ),
+    notes: str | None = typer.Option(
+        None,
+        "--notes",
+        help="Optional note to store on the registry entry.",
+    ),
+    provenance: str | None = typer.Option(
+        "manual_add",
+        "--provenance",
+        help="Optional provenance string for this source.",
+    ),
+    portal_type: str | None = typer.Option(
+        None,
+        "--portal-type",
+        help="Optional explicit portal type override.",
+    ),
+    verify: bool = typer.Option(
+        True,
+        "--verify/--no-verify",
+        help="Verify the source before storing it. --no-verify stores it as manual_review by default.",
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-source fetch timeout in seconds when verification is enabled.",
+    ),
+) -> None:
+    """Add one ATS source into the durable registry."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    try:
+        result = register_source(
+            paths.database_path,
+            source_url=source_url,
+            portal_type=portal_type,
+            company=company,
+            label=label,
+            notes=notes,
+            provenance=provenance,
+            verify=verify,
+            timeout_seconds=timeout,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_add_report(paths, result))
+
+
+@sources_app.command("discover-ats")
+def sources_discover_ats(
+    limit: int = typer.Option(
+        DEFAULT_DISCOVER_ATS_LIMIT,
+        "--limit",
+        min=1,
+        help="Maximum number of verified ATS boards to add as active registry sources.",
+    ),
+    provider: list[str] = typer.Option(
+        None,
+        "--provider",
+        help=(
+            "Optional provider filter. Repeat to probe a subset of providers. "
+            f"Allowed values: {', '.join(SUPPORTED_DISCOVER_ATS_PROVIDERS)}."
+        ),
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        dir_okay=False,
+        file_okay=True,
+        writable=True,
+        resolve_path=False,
+        help="Optional text file to write discovered active ATS board roots.",
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_DISCOVER_ATS_TIMEOUT_SECONDS,
+        "--timeout",
+        min=0.1,
+        help="Per-request timeout in seconds while probing ATS discovery endpoints.",
+    ),
+) -> None:
+    """Discover ATS board roots at scale from public Greenhouse, Lever, and Ashby endpoints."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = discover_registry_ats_sources(
+            paths,
+            limit=limit,
+            output_path=output,
+            providers=tuple(provider or ()),
+            timeout_seconds=timeout,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_discover_ats_report(paths, result))
+
+
+@sources_app.command("harvest-companies")
+def sources_harvest_companies(
+    source: list[str] = typer.Option(
+        None,
+        "--source",
+        help=company_harvest_sources_help_text(),
+    ),
+    out_dir: Path | None = typer.Option(
+        None,
+        "--out-dir",
+        help="Optional output directory for harvested domains and the harvest report.",
+    ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        help="Optional short label to include in the default run id and output directory name.",
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_COMPANY_HARVEST_TIMEOUT_SECONDS,
+        "--timeout",
+        min=0.1,
+        help="Per-fetch timeout in seconds while harvesting directory pages and inspecting company sites.",
+    ),
+    max_requests_per_second: float = typer.Option(
+        DEFAULT_COMPANY_HARVEST_MAX_REQUESTS_PER_SECOND,
+        "--max-requests-per-second",
+        min=0.1,
+        help="Bound the combined harvest and detect-sites fetch rate.",
+    ),
+) -> None:
+    """Harvest company domains from curated public directory pages and feed them into detect-sites."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = harvest_companies_from_sources(
+            paths,
+            sources=tuple(source or ()),
+            out_dir=out_dir,
+            label=label,
+            timeout_seconds=timeout,
+            max_requests_per_second=max_requests_per_second,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_harvest_companies_report(paths, result))
+
+
+@sources_app.command("seed-bulk")
+def sources_seed_bulk(
+    companies: list[str] = typer.Argument(
+        None,
+        help=(
+            "Optional bulk seed entries. Prefer direct Greenhouse, Lever, or Ashby board URLs. "
+            "Also accepts company names, domains, careers URLs, or "
+            "'Company Name | https://jobs.example.com | notes'."
+        ),
+    ),
+    from_file: Path | None = typer.Option(
+        None,
+        "--from-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "Optional text file containing one bulk seed entry per line. Blank lines "
+            "and lines starting with # are ignored."
+        ),
+    ),
+    starter: list[str] = typer.Option(
+        None,
+        "--starter",
+        help=seed_bulk_starter_help_text(),
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-fetch timeout in seconds while probing supported ATS roots.",
+    ),
+) -> None:
+    """Seed the durable registry from ATS URLs, company names, domains, or careers URLs."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = seed_registry_bulk(
+            paths,
+            companies=tuple(companies or ()),
+            from_file=from_file,
+            starter_lists=tuple(starter or ()),
+            timeout_seconds=timeout,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_seed_bulk_report(paths, result))
+
+
+@sources_app.command("detect-sites")
+def sources_detect_sites(
+    companies: list[str] = typer.Argument(
+        None,
+        help=(
+            "Optional company-site inputs. Accepts domains, homepage URLs, careers URLs, direct ATS URLs, or "
+            "'Company Name | https://company.example | notes'. Company-name-only inputs stay conservative."
+        ),
+    ),
+    from_file: Path | None = typer.Option(
+        None,
+        "--from-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "Optional text file containing one company-site input per line. Blank lines "
+            "and lines starting with # are ignored."
+        ),
+    ),
+    starter: list[str] = typer.Option(
+        None,
+        "--starter",
+        help=detect_sites_starter_help_text(),
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-fetch timeout in seconds while inspecting company sites and verifying supported ATS roots.",
+    ),
+    structured_clues: bool = typer.Option(
+        True,
+        "--structured-clues/--no-structured-clues",
+        help="Inspect already fetched public pages for JSON-LD, embedded ATS URLs, and bounded machine-readable clues.",
+    ),
+) -> None:
+    """Inspect employer sites, detect supported ATS boards, and upsert them into the registry."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = detect_registry_sources_from_sites(
+            paths,
+            companies=tuple(companies or ()),
+            from_file=from_file,
+            starter_lists=tuple(starter or ()),
+            timeout_seconds=timeout,
+            use_structured_clues=structured_clues,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_detect_sites_report(paths, result))
+
+
+@sources_app.command("extract-jobposting")
+def sources_extract_jobposting(
+    targets: list[str] = typer.Argument(
+        None,
+        help=(
+            "Company domains, homepages, or direct careers page URLs to scan for "
+            "schema.org JobPosting JSON-LD."
+        ),
+    ),
+    from_file: Path | None = typer.Option(
+        None,
+        "--from-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "Optional text file containing one domain or page URL per line. Blank "
+            "lines and lines starting with # are ignored."
+        ),
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_JOBPOSTING_TIMEOUT_SECONDS,
+        "--timeout",
+        min=0.1,
+        help="Per-page fetch timeout in seconds.",
+    ),
+    max_requests_per_second: float = typer.Option(
+        DEFAULT_JOBPOSTING_MAX_REQUESTS_PER_SECOND,
+        "--max-requests-per-second",
+        min=0.1,
+        help="Maximum fetch rate across scanned pages.",
+    ),
+    batch_id: str | None = typer.Option(
+        None,
+        "--batch-id",
+        "--run-id",
+        help="Optional import batch id to attach to imported jobs.",
+    ),
+) -> None:
+    """Extract embedded JobPosting JSON-LD from company pages and import jobs directly."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = extract_jobposting_sources(
+            paths,
+            targets=tuple(targets or ()),
+            from_file=from_file,
+            timeout_seconds=timeout,
+            max_requests_per_second=max_requests_per_second,
+            batch_id=batch_id,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_extract_jobposting_report(paths, result))
+    if result.failed_count:
+        raise typer.Exit(code=1)
+
+
+@sources_app.command("expand-registry")
+def sources_expand_registry(
+    companies: list[str] = typer.Argument(
+        None,
+        help=(
+            "Optional discovery inputs. Accepts direct ATS URLs, domains, homepage URLs, careers URLs, or "
+            "'Company Name | https://company.example | notes'."
+        ),
+    ),
+    from_file: Path | None = typer.Option(
+        None,
+        "--from-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help=(
+            "Optional text file containing one discovery input per line. Blank lines "
+            "and lines starting with # are ignored."
+        ),
+    ),
+    starter: list[str] = typer.Option(
+        None,
+        "--starter",
+        help=seed_bulk_starter_help_text(),
+    ),
+    detect_sites: bool = typer.Option(
+        False,
+        "--detect-sites/--no-detect-sites",
+        help="Inspect company sites for ATS footprints in addition to ingesting direct ATS inputs and starter entries.",
+    ),
+    discover_ats: bool = typer.Option(
+        False,
+        "--discover-ats/--no-discover-ats",
+        help="Probe bundled Greenhouse, Lever, and Ashby public surfaces for more registry candidates.",
+    ),
+    structured_clues: bool = typer.Option(
+        True,
+        "--structured-clues/--no-structured-clues",
+        help="Use JSON-LD, embedded ATS URLs, and machine-readable job-feed clues during company-site detection.",
+    ),
+    provider: list[str] = typer.Option(
+        None,
+        "--provider",
+        help=(
+            "Optional discover-ats provider filter. Repeat to keep ATS probing focused. "
+            f"Allowed values: {', '.join(SUPPORTED_DISCOVER_ATS_PROVIDERS)}."
+        ),
+    ),
+    limit: int = typer.Option(
+        DEFAULT_DISCOVER_ATS_LIMIT,
+        "--limit",
+        min=1,
+        help="Maximum number of active ATS sources to accept from the discover-ats probing lane.",
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_DISCOVER_ATS_TIMEOUT_SECONDS,
+        "--timeout",
+        min=0.1,
+        help="Per-fetch timeout in seconds across all enabled discovery lanes.",
+    ),
+) -> None:
+    """Run the practical multi-lane workflow for growing the durable source registry."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = expand_registry_sources(
+            paths,
+            companies=tuple(companies or ()),
+            from_file=from_file,
+            starter_lists=tuple(starter or ()),
+            detect_sites=detect_sites,
+            discover_ats=discover_ats,
+            structured_clues=structured_clues,
+            discover_ats_limit=limit,
+            discover_ats_providers=tuple(provider or ()),
+            timeout_seconds=timeout,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_expand_report(paths, result))
+
+
+@sources_app.command("import")
+def sources_import(
+    from_file: Path = typer.Option(
+        ...,
+        "--from-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help="Text or JSON file containing registry sources to import.",
+    ),
+    verify: bool = typer.Option(
+        True,
+        "--verify/--no-verify",
+        help="Verify imported sources before storing them.",
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-source fetch timeout in seconds when verification is enabled.",
+    ),
+    notes: str | None = typer.Option(
+        None,
+        "--notes",
+        help="Optional note to append to every imported source.",
+    ),
+    provenance: str | None = typer.Option(
+        None,
+        "--provenance",
+        help="Optional provenance string to append to every imported source.",
+    ),
+) -> None:
+    """Import ATS sources into the durable registry from a text or JSON file."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    try:
+        result = import_registry_sources(
+            paths.database_path,
+            input_path=from_file,
+            verify=verify,
+            timeout_seconds=timeout,
+            notes=notes,
+            provenance=provenance,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_import_report(paths, from_file, result))
+    if result.errors:
+        raise typer.Exit(code=1)
+
+
+@sources_app.command("verify")
+def sources_verify(
+    source_ids: list[int] = typer.Argument(
+        None,
+        help="Optional source ids to verify. Defaults to active and manual_review sources.",
+    ),
+    include_inactive: bool = typer.Option(
+        False,
+        "--include-inactive",
+        help="Include inactive sources when no ids are provided.",
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-source fetch timeout in seconds.",
+    ),
+) -> None:
+    """Verify registry sources and refresh their status."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    try:
+        results = verify_registry_sources(
+            paths.database_path,
+            source_ids=source_ids or None,
+            include_inactive=include_inactive,
+            timeout_seconds=timeout,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_verify_report(paths, results))
+
+
+@sources_app.command("deactivate")
+def sources_deactivate(
+    source_id: int = typer.Argument(..., help="Registry source id to deactivate."),
+    note: str | None = typer.Option(
+        None,
+        "--note",
+        help="Optional note to append while deactivating the source.",
+    ),
+) -> None:
+    """Deactivate one registry source."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    try:
+        entry = deactivate_registry_source(
+            paths.database_path,
+            source_id=source_id,
+            note=note,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_deactivate_report(paths, entry))
+
+
+@sources_app.command("collect")
+def sources_collect(
+    source_ids: list[int] = typer.Argument(
+        None,
+        help="Optional registry source ids to collect. Defaults to all active sources.",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        min=1,
+        help="Optional cap on how many active registry sources to collect.",
+    ),
+    out_dir: Path | None = typer.Option(
+        None,
+        "--out-dir",
+        help="Optional output directory for normal collect artifacts.",
+    ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        help="Optional short label for the collect run id and artifacts.",
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        help="Per-source fetch timeout in seconds.",
+    ),
+    verify: bool = typer.Option(
+        True,
+        "--verify/--no-verify",
+        help="Verify selected registry entries if they have not been verified yet or are not active.",
+    ),
+    force_verify: bool = typer.Option(
+        False,
+        "--force-verify",
+        help="Reverify every selected source before collecting.",
+    ),
+    import_results: bool = typer.Option(
+        False,
+        "--import",
+        help="Import collected leads automatically after collection completes.",
+    ),
+) -> None:
+    """Collect jobs directly from the durable source registry."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = collect_registry_sources(
+            paths,
+            source_ids=tuple(source_ids or ()),
+            limit=limit,
+            out_dir=out_dir,
+            label=label,
+            timeout_seconds=timeout,
+            verify_if_needed=verify,
+            force_verify=force_verify,
+            import_results=import_results,
+        )
+    except ValueError as exc:
+        typer.echo(render_collect_error_report(str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_source_registry_collect_report(paths, result))
+    if result.import_result is not None and result.import_result.errors:
+        raise typer.Exit(code=1)
 
 
 @maintenance_app.command("backfill")
@@ -1047,8 +1865,37 @@ def application_assist(
         "--portal-hints",
         help="Show portal detection, hints, and normalized/apply link suggestions when available.",
     ),
+    prefill: bool = typer.Option(
+        False,
+        "--prefill",
+        help="Open one application page, fill safe fields, upload the recommended resume, and stop before submit.",
+    ),
+    launch_order: int | None = typer.Option(
+        None,
+        "--launch-order",
+        min=1,
+        help="Launch order from the manifest to prefill. Required when multiple launchable items exist.",
+    ),
+    applicant_profile: Path | None = typer.Option(
+        None,
+        "--applicant-profile",
+        help="Optional applicant profile JSON path. Defaults to .jobs_ai_applicant_profile.json in the project root.",
+    ),
+    browser_backend: str = typer.Option(
+        "playwright",
+        "--browser-backend",
+        help=(
+            "Browser automation backend for --prefill. Allowed values: "
+            f"{', '.join(SUPPORTED_PREFILL_BROWSER_BACKENDS)}."
+        ),
+    ),
+    hold_open: bool = typer.Option(
+        True,
+        "--hold-open/--no-hold-open",
+        help="Keep the automation browser open after prefilling so the operator can review and submit manually.",
+    ),
 ) -> None:
-    """Show read-only resume and snippet guidance for launchable applications."""
+    """Show read-only guidance or run review-first browser prefilling for one application."""
     try:
         manifest = load_session_manifest(manifest_path)
         plan = build_launch_plan(manifest)
@@ -1056,12 +1903,44 @@ def application_assist(
     except ValueError as exc:
         typer.echo(render_application_assist_error_report(manifest_path, str(exc)))
         raise typer.Exit(code=1)
-    typer.echo(
-        render_application_assist_report(
-            assist,
-            show_portal_hints=portal_hints,
+    if not prefill:
+        typer.echo(
+            render_application_assist_report(
+                assist,
+                show_portal_hints=portal_hints,
+            )
         )
-    )
+        return
+
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        browser = create_prefill_browser_backend(browser_backend)
+    except ValueError as exc:
+        typer.echo(render_application_assist_error_report(manifest_path, str(exc)))
+        raise typer.Exit(code=1)
+    try:
+        result = run_application_prefill(
+            manifest_path,
+            project_root=paths.project_root,
+            applicant_profile_path=applicant_profile,
+            launch_order=launch_order,
+            browser_backend=browser,
+        )
+    except ValueError as exc:
+        browser.close()
+        typer.echo(render_application_assist_error_report(manifest_path, str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_application_prefill_report(result))
+    try:
+        if hold_open:
+            typer.echo(
+                "Browser remains open for manual review. Click submit manually if you choose, then press Enter to close the automation browser."
+            )
+            click.prompt("", prompt_suffix="", default="", show_default=False)
+    finally:
+        browser.close()
 
 
 @app.command("portal-hint")
@@ -1167,12 +2046,18 @@ def db_status() -> None:
 
 def run(argv: Sequence[str] | None = None) -> int:
     try:
-        app(args=list(argv) if argv is not None else None, prog_name="jobs-ai", standalone_mode=False)
+        result = app(
+            args=list(argv) if argv is not None else None,
+            prog_name="jobs-ai",
+            standalone_mode=False,
+        )
     except click.ClickException as exc:
         exc.show()
         return exc.exit_code
     except typer.Exit as exc:
         return exc.exit_code
+    if isinstance(result, int):
+        return result
     return 0
 
 

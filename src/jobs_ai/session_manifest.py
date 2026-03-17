@@ -21,6 +21,7 @@ class ManifestItem:
     company: str | None
     title: str | None
     apply_url: str | None
+    portal_type: str | None
     recommended_resume_variant: ManifestSelection | None
     recommended_profile_snippet: ManifestSelection | None
     warnings: tuple[str, ...]
@@ -31,6 +32,8 @@ class SessionSelectionScope:
     batch_id: str | None
     source_query: str | None
     import_source: str | None
+    selection_mode: str | None = None
+    refresh_batch_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +129,7 @@ def _item_from_payload(index: int, payload: object) -> ManifestItem:
     apply_url = _optional_string(payload.get("apply_url"), f"{path}.apply_url")
     if apply_url is None:
         warnings.append("apply_url missing")
+    portal_type = _optional_string(payload.get("portal_type"), f"{path}.portal_type")
 
     if _selection_is_incomplete(resume_variant, require_text=False):
         warnings.append("recommended_resume_variant incomplete")
@@ -139,6 +143,7 @@ def _item_from_payload(index: int, payload: object) -> ManifestItem:
         company=company,
         title=title,
         apply_url=apply_url,
+        portal_type=portal_type,
         recommended_resume_variant=resume_variant,
         recommended_profile_snippet=profile_snippet,
         warnings=tuple(warnings),
@@ -168,6 +173,11 @@ def _selection_scope_from_payload(payload: object, path: str) -> SessionSelectio
         batch_id=_optional_string(payload.get("batch_id"), f"{path}.batch_id"),
         source_query=_optional_string(payload.get("source_query"), f"{path}.source_query"),
         import_source=_optional_string(payload.get("import_source"), f"{path}.import_source"),
+        selection_mode=_optional_string(payload.get("selection_mode"), f"{path}.selection_mode"),
+        refresh_batch_id=_optional_string(
+            payload.get("refresh_batch_id"),
+            f"{path}.refresh_batch_id",
+        ),
     )
 
 

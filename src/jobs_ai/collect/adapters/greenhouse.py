@@ -12,6 +12,7 @@ from .base import (
     choose_first_text,
     company_from_page_metadata,
     extract_identifier_value,
+    extract_json_after_marker,
     extract_job_posting_nodes,
     extract_location_text,
     fetch_source,
@@ -35,6 +36,12 @@ _GREENHOUSE_LINK_RE = re.compile(
 _GREENHOUSE_LOCATION_RE = re.compile(
     r'<(?:span|div)[^>]*class="[^"]*\blocation\b[^"]*"[^>]*>(?P<location>.*?)</(?:span|div)>',
     re.IGNORECASE | re.DOTALL,
+)
+_GREENHOUSE_STATE_MARKERS = (
+    "window.__remixContext =",
+    "window.__remixContext=",
+    "window.__initialState__ =",
+    "window.__initialState__=",
 )
 
 
@@ -69,7 +76,10 @@ class GreenhouseAdapter:
 
         fetch_url = response.final_url or source.normalized_url or source.source_url
         direct_job_url = _is_direct_greenhouse_job_url(fetch_url)
-        parse_attempts = [_parse_greenhouse_json_ld(response.text, fetch_url)]
+        parse_attempts = [
+            _parse_greenhouse_remix(response.text, fetch_url, direct_job_url=direct_job_url),
+            _parse_greenhouse_json_ld(response.text, fetch_url),
+        ]
         if not direct_job_url:
             parse_attempts.append(_parse_greenhouse_board_html(response.text, fetch_url))
 
@@ -85,6 +95,106 @@ class GreenhouseAdapter:
             ),
             direct_job_reason_code="greenhouse_direct_job_ambiguous",
         )
+
+
+def _parse_greenhouse_remix(
+    html_text: str,
+    base_url: str,
+    *,
+    direct_job_url: bool,
+) -> ParseAttempt:
+    payload = _extract_greenhouse_state_payload(html_text)
+    if payload is None:
+        return ParseAttempt()
+
+    loader_data = _greenhouse_loader_data(payload)
+    if loader_data is None:
+        return ParseAttempt(
+            ambiguous_reason="Greenhouse embedded page data was missing loader data; manual review required."
+        )
+
+    if direct_job_url:
+        return _parse_greenhouse_remix_direct_job(loader_data, base_url)
+    return _parse_greenhouse_remix_board(loader_data, base_url)
+
+
+def _extract_greenhouse_state_payload(html_text: str) -> dict[str, object] | None:
+    for marker in _GREENHOUSE_STATE_MARKERS:
+        if marker not in html_text:
+            continue
+        payload = extract_json_after_marker(html_text, marker)
+        if isinstance(payload, dict):
+            return payload
+        return None
+    return None
+
+
+def _parse_greenhouse_remix_board(loader_data: dict[str, object], base_url: str) -> ParseAttempt:
+    company = None
+    posting_records: list[object] = []
+    for route_payload in loader_data.values():
+        if not isinstance(route_payload, dict):
+            continue
+        company = company or _greenhouse_company_from_board_route(route_payload)
+        posting_records.extend(_greenhouse_postings_from_route(route_payload))
+
+    if not posting_records:
+        return ParseAttempt()
+    if company is None:
+        return ParseAttempt(
+            ambiguous_reason="Greenhouse embedded board data was present but company metadata was missing; manual review required."
+        )
+
+    leads: list[CollectedLead] = []
+    incomplete_count = 0
+    for posting in posting_records:
+        if not isinstance(posting, dict):
+            incomplete_count += 1
+            continue
+        lead = _lead_from_greenhouse_board_posting(posting, company=company, base_url=base_url)
+        if lead is not None:
+            leads.append(lead)
+            continue
+        incomplete_count += 1
+    if incomplete_count:
+        return ParseAttempt(
+            ambiguous_reason=(
+                "Greenhouse embedded board data was missing title, location, or URL for "
+                f"{incomplete_count} posting(s); manual review required."
+            )
+        )
+    if not leads:
+        return ParseAttempt(
+            ambiguous_reason="Greenhouse embedded board data was present but no complete postings were parseable; manual review required."
+        )
+    return ParseAttempt(leads=tuple(leads))
+
+
+def _parse_greenhouse_remix_direct_job(loader_data: dict[str, object], base_url: str) -> ParseAttempt:
+    for route_payload in loader_data.values():
+        if not isinstance(route_payload, dict):
+            continue
+        job_post = route_payload.get("jobPost")
+        if not isinstance(job_post, dict):
+            continue
+
+        company = choose_first_text(
+            job_post.get("company_name"),
+            job_post.get("companyName"),
+            job_post.get("company"),
+        ) or _greenhouse_company_from_board_route(route_payload)
+        lead = _lead_from_greenhouse_direct_job(
+            job_post,
+            route_payload=route_payload,
+            company=company,
+            base_url=base_url,
+        )
+        if lead is None:
+            return ParseAttempt(
+                ambiguous_reason="Greenhouse direct-job page data was missing title, company, location, or URL; manual review required."
+            )
+        return ParseAttempt(leads=(lead,))
+    return ParseAttempt()
 
 
 def _parse_greenhouse_json_ld(html_text: str, base_url: str) -> ParseAttempt:
@@ -188,6 +298,112 @@ def _greenhouse_company_from_payload(payload: dict[str, object]) -> str | None:
     return normalize_text(payload.get("company"))
 
 
+def _greenhouse_loader_data(payload: dict[str, object]) -> dict[str, object] | None:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+    loader_data = state.get("loaderData")
+    if not isinstance(loader_data, dict):
+        return None
+    return loader_data
+
+
+def _greenhouse_company_from_board_route(route_payload: dict[str, object]) -> str | None:
+    board = route_payload.get("board")
+    if not isinstance(board, dict):
+        return None
+    return choose_first_text(board.get("name"), board.get("company_name"), board.get("companyName"))
+
+
+def _greenhouse_postings_from_route(route_payload: dict[str, object]) -> list[object]:
+    postings: list[object] = []
+    for key in ("jobPosts", "featuredPosts"):
+        payload = route_payload.get(key)
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                postings.extend(data)
+        elif isinstance(payload, list):
+            postings.extend(payload)
+    return postings
+
+
+def _lead_from_greenhouse_board_posting(
+    posting: dict[str, object],
+    *,
+    company: str,
+    base_url: str,
+) -> CollectedLead | None:
+    title = choose_first_text(posting.get("title"), posting.get("text"), posting.get("name"))
+    location = choose_first_text(posting.get("location"), posting.get("job_post_location")) or _greenhouse_location_from_payload(
+        posting
+    )
+    apply_url = (
+        build_absolute_url(base_url, posting.get("absolute_url"))
+        or build_absolute_url(base_url, posting.get("public_url"))
+        or build_absolute_url(base_url, posting.get("url"))
+    )
+    if None in (title, location, apply_url):
+        return None
+    return CollectedLead(
+        source="greenhouse",
+        company=company,
+        title=title,
+        location=location,
+        apply_url=apply_url,
+        source_job_id=(
+            _greenhouse_job_id(apply_url)
+            or _greenhouse_scalar_text(
+                posting.get("id"),
+                posting.get("job_post_id"),
+                posting.get("internal_job_id"),
+            )
+        ),
+        portal_type="greenhouse",
+        posted_at=choose_first_text(posting.get("published_at"), posting.get("posted_at")),
+    )
+
+
+def _lead_from_greenhouse_direct_job(
+    payload: dict[str, object],
+    *,
+    route_payload: dict[str, object],
+    company: str | None,
+    base_url: str,
+) -> CollectedLead | None:
+    title = choose_first_text(payload.get("title"), payload.get("name"))
+    location = choose_first_text(payload.get("job_post_location"), payload.get("location")) or _greenhouse_location_from_payload(
+        payload
+    )
+    apply_url = (
+        build_absolute_url(base_url, payload.get("public_url"))
+        or build_absolute_url(base_url, payload.get("absolute_url"))
+        or build_absolute_url(base_url, route_payload.get("submitPath"))
+        or base_url
+    )
+    if None in (title, company, location):
+        return None
+    return CollectedLead(
+        source="greenhouse",
+        company=company,
+        title=title,
+        location=location,
+        apply_url=apply_url,
+        source_job_id=(
+            _greenhouse_job_id(apply_url)
+            or _greenhouse_scalar_text(
+                route_payload.get("jobPostId"),
+                payload.get("id"),
+                payload.get("job_post_id"),
+                payload.get("hiring_plan_id"),
+            )
+        ),
+        portal_type="greenhouse",
+        salary_text=_greenhouse_salary_text(payload.get("pay_ranges")),
+        posted_at=choose_first_text(payload.get("published_at"), payload.get("posted_at")),
+    )
+
+
 def _greenhouse_location_from_payload(payload: dict[str, object]) -> str | None:
     location = extract_location_text(payload.get("jobLocation"))
     if location is not None:
@@ -201,6 +417,55 @@ def _greenhouse_location_from_payload(payload: dict[str, object]) -> str | None:
     if applicant_location_requirements is not None:
         return "Remote"
     return None
+
+
+def _greenhouse_scalar_text(*values: object) -> str | None:
+    for value in values:
+        text = normalize_text(value)
+        if text is not None:
+            return text
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+    return None
+
+
+def _greenhouse_salary_text(value: object) -> str | None:
+    if not isinstance(value, list):
+        return None
+
+    parts: list[str] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        label = choose_first_text(entry.get("title"))
+        bounds = [
+            bound
+            for bound in (
+                choose_first_text(entry.get("min")),
+                choose_first_text(entry.get("max")),
+            )
+            if bound is not None
+        ]
+        amount_text = " - ".join(bounds)
+        currency = choose_first_text(entry.get("currency_type"))
+        if currency is not None:
+            amount_text = f"{amount_text} {currency}".strip()
+        description = choose_first_text(entry.get("description"))
+
+        segment = amount_text or description
+        if segment is None:
+            continue
+        if label is not None:
+            segment = f"{label}: {segment}"
+        parts.append(segment)
+
+    if not parts:
+        return None
+    return "; ".join(parts)
 
 
 def _greenhouse_job_id(value: str) -> str | None:

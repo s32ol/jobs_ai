@@ -1,0 +1,24 @@
+{
+  "full_name": "Pat Example",
+  "email": "pat@example.com",
+  "phone": "555-0100",
+  "location": "Remote, United States",
+  "linkedin": "https://www.linkedin.com/in/patexample",
+  "github": "https://github.com/patexample",
+  "portfolio": "https://patexample.dev",
+  "work_authorization": "US Citizen",
+  "authorized_to_work_in_us": true,
+  "requires_sponsorship": false,
+  "short_text": "Hands-on data platform engineer with Python, SQL, and production pipeline delivery experience.",
+  "use_recommended_profile_snippet": true,
+  "resume_paths": {
+    "general-data": "resumes/general-data.pdf",
+    "data-engineering": "resumes/data-engineering.pdf",
+    "analytics-engineering": "resumes/analytics-engineering.pdf",
+    "telemetry-observability": "resumes/telemetry-observability.pdf"
+  },
+  "canned_answers": {
+    "How did you hear about us": "Referral",
+    "Current company": "Independent consultant"
+  }
+}

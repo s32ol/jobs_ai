@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from ..collect.fetch import Fetcher, fetch_text
 from .infer import build_source_candidates
 from .models import CompanySeedInput, CompanySeedResult, SourceSeedRun, SourceSeedRunReport
-from .verify import verify_source_candidate
+from .verify import (
+    discover_manual_review_sources_from_career_page,
+    discover_supported_source_candidate_from_url,
+    discover_source_candidates_from_career_page,
+    verify_source_candidate,
+)
 
 
 def run_source_seeding(
@@ -63,7 +68,23 @@ def _seed_company(
     timeout_seconds: float,
     fetcher: Fetcher,
 ) -> CompanySeedResult:
+    manual_review_sources = discover_manual_review_sources_from_career_page(
+        company_input,
+        timeout_seconds=timeout_seconds,
+        fetcher=fetcher,
+    )
     if company_input.company is None:
+        if manual_review_sources:
+            primary_manual_review = manual_review_sources[0]
+            return CompanySeedResult(
+                company_input=company_input,
+                outcome="manual_review",
+                reason_code=primary_manual_review.reason_code,
+                reason=primary_manual_review.reason,
+                manual_review_sources=manual_review_sources,
+                suggested_next_action=primary_manual_review.suggested_next_action,
+                evidence=primary_manual_review.evidence,
+            )
         return CompanySeedResult(
             company_input=company_input,
             outcome="skipped",
@@ -72,7 +93,20 @@ def _seed_company(
             suggested_next_action="Add a company name, optionally with a domain, and rerun seed-sources.",
         )
 
-    candidates = build_source_candidates(company_input)
+    direct_candidates = discover_source_candidates_from_career_page(
+        company_input,
+        timeout_seconds=timeout_seconds,
+        fetcher=fetcher,
+    )
+    direct_input_candidate = discover_supported_source_candidate_from_url(
+        company_input.career_page_url,
+    )
+    candidates = _merge_source_candidates(
+        direct_candidates,
+        ()
+        if direct_input_candidate is not None
+        else build_source_candidates(company_input),
+    )
     if not candidates:
         return CompanySeedResult(
             company_input=company_input,
@@ -117,6 +151,7 @@ def _seed_company(
             reason_code="confirmed_sources_found",
             reason=f"confirmed {len(confirmed_sources)} ATS board root(s)",
             confirmed_sources=tuple(confirmed_sources),
+            manual_review_sources=manual_review_sources,
             attempted_candidates=tuple(attempted_candidates),
             evidence=confirmed_evidence,
         )
@@ -134,12 +169,27 @@ def _seed_company(
             reason_code=primary.reason_code,
             reason=_primary_reason(primary.reason, len(manual_review_attempts)),
             confirmed_sources=(),
+            manual_review_sources=manual_review_sources,
             attempted_candidates=tuple(attempted_candidates),
             suggested_next_action=(
                 primary.suggested_next_action
                 or "Review the attempted candidates manually before adding a reusable board-root source."
             ),
             evidence=primary.evidence,
+        )
+
+    if manual_review_sources:
+        primary_manual_review = manual_review_sources[0]
+        return CompanySeedResult(
+            company_input=company_input,
+            outcome="manual_review",
+            reason_code=primary_manual_review.reason_code,
+            reason=_primary_reason(primary_manual_review.reason, len(manual_review_sources)),
+            confirmed_sources=(),
+            manual_review_sources=manual_review_sources,
+            attempted_candidates=tuple(attempted_candidates),
+            suggested_next_action=primary_manual_review.suggested_next_action,
+            evidence=primary_manual_review.evidence,
         )
 
     skipped_attempts = [
@@ -154,6 +204,7 @@ def _seed_company(
             outcome="skipped",
             reason_code=primary.reason_code,
             reason=_primary_reason(primary.reason, len(skipped_attempts)),
+            manual_review_sources=manual_review_sources,
             attempted_candidates=tuple(attempted_candidates),
             suggested_next_action=primary.suggested_next_action,
             evidence=primary.evidence,
@@ -164,6 +215,7 @@ def _seed_company(
         outcome="skipped",
         reason_code="no_candidates_attempted",
         reason="no ATS candidates were attempted for this company input",
+        manual_review_sources=manual_review_sources,
         attempted_candidates=tuple(attempted_candidates),
     )
 
@@ -184,3 +236,17 @@ def _normalize_created_at(created_at: datetime | None) -> datetime:
 
 def _format_created_at(created_at: datetime) -> str:
     return created_at.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _merge_source_candidates(
+    primary_candidates,
+    fallback_candidates,
+):
+    merged = []
+    seen_urls = set()
+    for candidate in primary_candidates + fallback_candidates:
+        if candidate.url in seen_urls:
+            continue
+        seen_urls.add(candidate.url)
+        merged.append(candidate)
+    return tuple(merged)

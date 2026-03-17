@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 
-from ..collect.fetch import FetchError, Fetcher, fetch_text
+from ..collect.fetch import Fetcher, fetch_text
 from ..collect.harness import run_collection
 from ..portal_support import build_portal_support, extract_portal_board_root_url
 from .models import DiscoverCandidate, DiscoverCandidateResult, DiscoverRun, DiscoverRunReport, SearchExecutionResult, SearchHit
@@ -24,6 +25,7 @@ def run_discovery(
     import_requested: bool = False,
     created_at: datetime | None = None,
     fetcher: Fetcher = fetch_text,
+    search_artifact_dir: Path | None = None,
 ) -> DiscoverRun:
     normalized_query = query.strip()
     if not normalized_query:
@@ -38,22 +40,12 @@ def run_discovery(
     manual_review_map: OrderedDict[str, DiscoverCandidateResult] = OrderedDict()
 
     for plan in build_search_plans(normalized_query):
-        try:
-            search_result, hits = execute_search_plan(
-                plan,
-                timeout_seconds=timeout_seconds,
-                fetcher=fetcher,
-            )
-        except FetchError as exc:
-            search_results.append(
-                SearchExecutionResult(
-                    plan=plan,
-                    hit_count=0,
-                    error=str(exc),
-                )
-            )
-            continue
-
+        search_result, hits = execute_search_plan(
+            plan,
+            timeout_seconds=timeout_seconds,
+            fetcher=fetcher,
+            artifact_dir=search_artifact_dir,
+        )
         search_results.append(search_result)
         raw_hit_count += len(hits)
         for hit in hits:

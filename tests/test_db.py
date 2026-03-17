@@ -33,7 +33,7 @@ class DatabaseTest(unittest.TestCase):
                     SELECT name
                     FROM sqlite_master
                     WHERE type = 'table'
-                      AND name IN ('jobs', 'applications', 'application_tracking', 'session_history')
+                      AND name IN ('jobs', 'applications', 'application_tracking', 'session_history', 'source_registry')
                     """
                 ).fetchall()
                 index_rows = connection.execute(
@@ -47,16 +47,20 @@ class DatabaseTest(unittest.TestCase):
                           'idx_jobs_ingest_batch_id',
                           'idx_jobs_canonical_apply_url',
                           'idx_jobs_identity_key',
+                          'idx_jobs_source_registry_id',
                           'idx_applications_job_id',
                           'idx_application_tracking_job_id',
                           'idx_session_history_created_at',
-                          'idx_session_history_ingest_batch_id'
+                          'idx_session_history_ingest_batch_id',
+                          'idx_source_registry_normalized_url',
+                          'idx_source_registry_status',
+                          'idx_source_registry_last_verified_at'
                       )
                     """
                 ).fetchall()
             self.assertEqual(
                 {row["name"] for row in table_rows},
-                {"jobs", "applications", "application_tracking", "session_history"},
+                {"jobs", "applications", "application_tracking", "session_history", "source_registry"},
             )
             self.assertEqual(
                 {row["name"] for row in index_rows},
@@ -66,10 +70,14 @@ class DatabaseTest(unittest.TestCase):
                     "idx_jobs_ingest_batch_id",
                     "idx_jobs_canonical_apply_url",
                     "idx_jobs_identity_key",
+                    "idx_jobs_source_registry_id",
                     "idx_applications_job_id",
                     "idx_application_tracking_job_id",
                     "idx_session_history_created_at",
                     "idx_session_history_ingest_batch_id",
+                    "idx_source_registry_normalized_url",
+                    "idx_source_registry_status",
+                    "idx_source_registry_last_verified_at",
                 },
             )
 

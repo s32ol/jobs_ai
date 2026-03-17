@@ -1,0 +1,18 @@
+[
+  {
+    "source": "manual",
+    "company": "Test Backend Co",
+    "title": "Python Backend Engineer",
+    "location": "Remote",
+    "apply_url": "https://example.com/jobs/python-backend-engineer-fresh",
+    "portal_type": "greenhouse"
+  },
+  {
+    "source": "manual",
+    "company": "Test Data Co",
+    "title": "Backend Data Engineer",
+    "location": "Remote",
+    "apply_url": "https://example.com/jobs/backend-data-engineer-fresh",
+    "portal_type": "lever"
+  }
+]

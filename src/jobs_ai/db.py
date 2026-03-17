@@ -11,7 +11,13 @@ from .jobs.identity import (
     normalize_optional_metadata,
 )
 
-REQUIRED_TABLES = ("jobs", "applications", "application_tracking", "session_history")
+REQUIRED_TABLES = (
+    "jobs",
+    "applications",
+    "application_tracking",
+    "session_history",
+    "source_registry",
+)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -29,12 +35,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     ingest_batch_id TEXT,
     source_query TEXT,
     import_source TEXT,
+    source_registry_id INTEGER,
     canonical_apply_url TEXT,
     identity_key TEXT,
     status TEXT NOT NULL DEFAULT 'new',
     raw_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_registry_id) REFERENCES source_registry(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS applications (
@@ -68,6 +76,24 @@ CREATE TABLE IF NOT EXISTS session_history (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS source_registry (
+    id INTEGER PRIMARY KEY,
+    source_url TEXT NOT NULL,
+    normalized_url TEXT NOT NULL,
+    portal_type TEXT,
+    company TEXT,
+    label TEXT,
+    status TEXT NOT NULL DEFAULT 'manual_review',
+    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_verified_at TEXT,
+    notes TEXT,
+    provenance TEXT,
+    verification_reason_code TEXT,
+    verification_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_apply_url ON jobs(apply_url);
 CREATE INDEX IF NOT EXISTS idx_jobs_source_company_title_location
 ON jobs(source, company, title, location);
@@ -75,12 +101,16 @@ CREATE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
 CREATE INDEX IF NOT EXISTS idx_application_tracking_job_id ON application_tracking(job_id);
 CREATE INDEX IF NOT EXISTS idx_session_history_created_at ON session_history(created_at);
 CREATE INDEX IF NOT EXISTS idx_session_history_ingest_batch_id ON session_history(ingest_batch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_source_registry_normalized_url ON source_registry(normalized_url);
+CREATE INDEX IF NOT EXISTS idx_source_registry_status ON source_registry(status);
+CREATE INDEX IF NOT EXISTS idx_source_registry_last_verified_at ON source_registry(last_verified_at);
 """
 
 POST_SCHEMA_SQL = """
 CREATE INDEX IF NOT EXISTS idx_jobs_ingest_batch_id ON jobs(ingest_batch_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_canonical_apply_url ON jobs(canonical_apply_url);
 CREATE INDEX IF NOT EXISTS idx_jobs_identity_key ON jobs(identity_key);
+CREATE INDEX IF NOT EXISTS idx_jobs_source_registry_id ON jobs(source_registry_id);
 """
 
 JOB_INSERT_SQL = """
@@ -98,6 +128,7 @@ INSERT INTO jobs (
     ingest_batch_id,
     source_query,
     import_source,
+    source_registry_id,
     canonical_apply_url,
     identity_key,
     raw_json
@@ -112,6 +143,7 @@ INSERT INTO jobs (
     ?,
     ?,
     COALESCE(?, CURRENT_TIMESTAMP),
+    ?,
     ?,
     ?,
     ?,
@@ -256,7 +288,7 @@ def schema_exists(database_path: Path) -> bool:
     return database_path.exists() and not missing_required_tables(database_path)
 
 
-def insert_job(connection: sqlite3.Connection, job_record: Mapping[str, str | None]) -> int:
+def insert_job(connection: sqlite3.Connection, job_record: Mapping[str, object]) -> int:
     identity = build_job_identity(job_record)
     cursor = connection.execute(
         JOB_INSERT_SQL,
@@ -274,6 +306,7 @@ def insert_job(connection: sqlite3.Connection, job_record: Mapping[str, str | No
             normalize_optional_metadata(job_record.get("ingest_batch_id")),
             normalize_optional_metadata(job_record.get("source_query")),
             normalize_optional_metadata(job_record.get("import_source")),
+            _nullable_int(job_record.get("source_registry_id")),
             identity.canonical_apply_url,
             identity.identity_key,
             job_record["raw_json"],
@@ -284,7 +317,7 @@ def insert_job(connection: sqlite3.Connection, job_record: Mapping[str, str | No
 
 def find_duplicate_job_match(
     connection: sqlite3.Connection,
-    job_record: Mapping[str, str | None],
+    job_record: Mapping[str, object],
 ) -> DuplicateJobMatch | None:
     apply_url = job_record.get("apply_url")
     if apply_url is not None:
@@ -330,7 +363,7 @@ def find_duplicate_job_match(
 
 def find_duplicate_job_id(
     connection: sqlite3.Connection,
-    job_record: Mapping[str, str | None],
+    job_record: Mapping[str, object],
 ) -> int | None:
     match = find_duplicate_job_match(connection, job_record)
     if match is None:
@@ -448,6 +481,7 @@ def _ensure_jobs_columns(connection: sqlite3.Connection) -> None:
         "ingest_batch_id": "TEXT",
         "source_query": "TEXT",
         "import_source": "TEXT",
+        "source_registry_id": "INTEGER",
         "canonical_apply_url": "TEXT",
         "identity_key": "TEXT",
     }
@@ -541,3 +575,21 @@ def _nullable_text(value: object) -> str | None:
         normalized_value = value.strip()
         return normalized_value or None
     return str(value)
+
+
+def _nullable_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        normalized_value = value.strip()
+        if not normalized_value:
+            return None
+        try:
+            return int(normalized_value)
+        except ValueError:
+            return None
+    return None

@@ -144,7 +144,7 @@ class MaintenanceBackfillTest(unittest.TestCase):
             self.assertEqual(result.candidate_jobs, 2)
             self.assertEqual(result.updated_jobs, 2)
             self.assertEqual(result.skipped_jobs, 0)
-            self.assertEqual(result.missing_tables, ("session_history",))
+            self.assertEqual(result.missing_tables, ("session_history", "source_registry"))
             self.assertIn("canonical_apply_url", result.missing_job_columns)
             self.assertIn("identity_key", result.missing_job_columns)
             field_counts = {entry.field_name: entry.count for entry in result.field_counts}

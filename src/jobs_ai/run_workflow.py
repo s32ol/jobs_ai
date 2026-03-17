@@ -11,17 +11,28 @@ from .db import initialize_schema
 from .discover.cli import run_discover_command
 from .discover.models import DiscoverRun
 from .jobs.importer import JobImportResult, import_jobs_from_file
+from .session_manifest import SessionSelectionScope
 from .session_start import SessionStartResult, start_session
+from .sources.models import SourceRegistryCollectResult
+from .sources.workflow import collect_registry_sources
 from .workspace import WorkspacePaths
 
 DEFAULT_RUN_DISCOVER_LIMIT = 20
+
+
+class DiscoverSearchWorkflowError(RuntimeError):
+    def __init__(self, discover_run: DiscoverRun) -> None:
+        super().__init__("discovery search failed before collection, import, or session start")
+        self.discover_run = discover_run
 
 
 @dataclass(frozen=True, slots=True)
 class RunWorkflowResult:
     query: str
     output_dir: Path
-    discover_run: DiscoverRun
+    intake_mode: str
+    discover_run: DiscoverRun | None
+    registry_collect_result: SourceRegistryCollectResult | None
     collected_sources: tuple[str, ...]
     collect_run: CollectRun | None
     import_result: JobImportResult | None
@@ -35,7 +46,17 @@ class RunWorkflowResult:
 
     @property
     def confirmed_source_count(self) -> int:
-        return len(self.discover_run.confirmed_sources)
+        if self.discover_run is not None:
+            return len(self.discover_run.confirmed_sources)
+        if self.registry_collect_result is not None:
+            return self.registry_collect_result.selected_source_count
+        return 0
+
+    @property
+    def registry_verified_source_count(self) -> int:
+        if self.registry_collect_result is None:
+            return 0
+        return self.registry_collect_result.verified_source_count
 
     @property
     def imported_jobs_count(self) -> int:
@@ -68,11 +89,92 @@ def run_operator_workflow(
     timeout_seconds: float = 10.0,
     open_urls: bool = False,
     executor_mode: str | None = None,
+    capture_search_artifacts: bool = False,
+    use_registry: bool = False,
     created_at: datetime | None = None,
     fetcher: Fetcher | None = None,
 ) -> RunWorkflowResult:
     effective_fetcher = fetch_text if fetcher is None else fetcher
     effective_created_at = _normalize_created_at(created_at)
+    if use_registry:
+        registry_collect_result = collect_registry_sources(
+            paths,
+            source_ids=(),
+            limit=collect_limit,
+            out_dir=out_dir,
+            label=label,
+            timeout_seconds=timeout_seconds,
+            verify_if_needed=True,
+            force_verify=False,
+            import_results=True,
+            source_query=query,
+            created_at=effective_created_at,
+            fetcher=effective_fetcher,
+        )
+        collect_run = registry_collect_result.collect_run
+        collect_artifacts = collect_run.report.artifact_paths
+        assert collect_artifacts is not None
+        workflow_dir = collect_artifacts.output_dir
+        batch_id = (
+            registry_collect_result.import_result.batch_id
+            if registry_collect_result.import_result is not None
+            else (collect_run.report.run_id or workflow_dir.name)
+        )
+        session_batch_id = batch_id
+        session_selection_scope: SessionSelectionScope | None = None
+        if registry_collect_result.import_result is not None:
+            import_result = registry_collect_result.import_result
+            if import_result.inserted_count == 0:
+                session_batch_id = None
+                session_selection_scope = SessionSelectionScope(
+                    batch_id=None,
+                    source_query=query,
+                    import_source=None,
+                    selection_mode="registry_refresh_empty_reused_existing",
+                    refresh_batch_id=import_result.batch_id,
+                )
+            else:
+                session_selection_scope = SessionSelectionScope(
+                    batch_id=import_result.batch_id,
+                    source_query=query,
+                    import_source=import_result.import_source,
+                    selection_mode="registry_new_imports",
+                    refresh_batch_id=import_result.batch_id,
+                )
+        initialize_schema(paths.database_path)
+        session_result = start_session(
+            paths.database_path,
+            project_root=paths.project_root,
+            default_exports_dir=paths.exports_dir,
+            limit=session_limit,
+            out_dir=workflow_dir,
+            label=label,
+            open_urls=open_urls,
+            executor_mode=executor_mode,
+            created_at=effective_created_at,
+            ingest_batch_id=session_batch_id,
+            source_query=query,
+            job_query=query,
+            selection_scope=session_selection_scope,
+        )
+        return RunWorkflowResult(
+            query=query,
+            output_dir=workflow_dir,
+            intake_mode="registry",
+            discover_run=None,
+            registry_collect_result=registry_collect_result,
+            collected_sources=collect_run.report.input_sources,
+            collect_run=collect_run,
+            import_result=registry_collect_result.import_result,
+            session_result=session_result,
+            discover_limit=discover_limit,
+            collect_limit=collect_limit,
+            session_limit=session_limit,
+            label=label,
+            open_requested=open_urls,
+            executor_mode=session_result.executor_mode,
+        )
+
     discover_run = run_discover_command(
         paths,
         query=query,
@@ -83,11 +185,14 @@ def run_operator_workflow(
         report_only=False,
         collect=False,
         import_results=False,
+        capture_search_artifacts=capture_search_artifacts,
         created_at=effective_created_at,
         fetcher=effective_fetcher,
     )
     artifact_paths = discover_run.report.artifact_paths
     assert artifact_paths is not None
+    if discover_run.report.has_fatal_search_failure:
+        raise DiscoverSearchWorkflowError(discover_run)
     workflow_dir = artifact_paths.output_dir
     workflow_batch_id = discover_run.report.run_id or workflow_dir.name
 
@@ -146,7 +251,9 @@ def run_operator_workflow(
     return RunWorkflowResult(
         query=query,
         output_dir=workflow_dir,
+        intake_mode="discover",
         discover_run=discover_run,
+        registry_collect_result=None,
         collected_sources=collected_sources,
         collect_run=collect_run,
         import_result=import_result,

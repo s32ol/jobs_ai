@@ -90,6 +90,7 @@ def _record_from_preview(preview: LaunchPreview) -> dict[str, object | None]:
         "location": preview.location,
         "source": preview.source,
         "apply_url": preview.apply_url,
+        "portal_type": preview.portal_type,
         "score": preview.score,
         "recommended_resume_variant": {
             "key": preview.resume_variant_key,
@@ -136,4 +137,6 @@ def _selection_scope_payload(selection_scope: SessionSelectionScope) -> dict[str
         "batch_id": selection_scope.batch_id,
         "source_query": selection_scope.source_query,
         "import_source": selection_scope.import_source,
+        "selection_mode": selection_scope.selection_mode,
+        "refresh_batch_id": selection_scope.refresh_batch_id,
     }

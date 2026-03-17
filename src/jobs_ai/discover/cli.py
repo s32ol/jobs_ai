@@ -27,6 +27,7 @@ def run_discover_command(
     report_only: bool,
     collect: bool,
     import_results: bool,
+    capture_search_artifacts: bool = False,
     created_at: datetime | None = None,
     fetcher: Fetcher | None = None,
 ) -> DiscoverRun:
@@ -36,6 +37,11 @@ def run_discover_command(
     run_id = _build_run_id(normalized_label, created_at_dt)
     output_dir = _resolve_output_dir(paths, out_dir=out_dir, run_id=run_id)
     effective_collect = collect or import_results
+    search_artifact_dir = (
+        output_dir / "search_artifacts"
+        if capture_search_artifacts and not report_only
+        else None
+    )
 
     run = run_discovery(
         normalized_query,
@@ -47,6 +53,7 @@ def run_discover_command(
         import_requested=import_results,
         created_at=created_at_dt,
         fetcher=fetch_text if fetcher is None else fetcher,
+        search_artifact_dir=search_artifact_dir,
     )
 
     collect_summary: DiscoverCollectSummary | None = None
@@ -99,16 +106,21 @@ def _run_follow_on_steps(
     import_results: bool,
 ) -> tuple[DiscoverCollectSummary, DiscoverImportSummary]:
     if not run.confirmed_sources:
+        skip_status = (
+            "skipped_search_failure"
+            if run.report.has_fatal_search_failure
+            else "skipped_no_confirmed_sources"
+        )
         return (
             DiscoverCollectSummary(
                 requested=True,
                 executed=False,
-                status="skipped_no_confirmed_sources",
+                status=skip_status,
             ),
             DiscoverImportSummary(
                 requested=import_results,
                 executed=False,
-                status="skipped_no_confirmed_sources" if import_results else "not_requested",
+                status=skip_status if import_results else "not_requested",
             ),
         )
 

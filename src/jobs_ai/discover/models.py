@@ -7,6 +7,14 @@ from typing import Literal
 from ..collect.models import OutcomeEvidence
 
 DiscoverOutcome = Literal["confirmed", "manual_review", "skipped"]
+SearchExecutionStatus = Literal[
+    "success",
+    "zero_results",
+    "provider_anomaly",
+    "parse_failure",
+    "fetch_failure",
+]
+SEARCH_FAILURE_STATUSES = frozenset({"provider_anomaly", "parse_failure", "fetch_failure"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,8 +28,23 @@ class SearchPlan:
 @dataclass(frozen=True, slots=True)
 class SearchExecutionResult:
     plan: SearchPlan
+    status: SearchExecutionStatus
+    hit_count: int
+    attempt_count: int = 1
+    error: str | None = None
+    evidence: OutcomeEvidence | None = None
+    attempts: tuple["SearchAttempt", ...] = ()
+    raw_artifact_paths: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SearchAttempt:
+    attempt_number: int
+    status: SearchExecutionStatus
     hit_count: int
     error: str | None = None
+    evidence: OutcomeEvidence | None = None
+    raw_artifact_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +110,7 @@ class DiscoverArtifactPaths:
     confirmed_sources_path: Path | None
     manual_review_sources_path: Path | None
     discover_report_path: Path
+    search_artifact_dir: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +136,14 @@ class DiscoverRunReport:
     artifact_paths: DiscoverArtifactPaths | None = None
     collect_summary: DiscoverCollectSummary | None = None
     import_summary: DiscoverImportSummary | None = None
+
+    @property
+    def has_search_failures(self) -> bool:
+        return any(result.status in SEARCH_FAILURE_STATUSES for result in self.search_results)
+
+    @property
+    def has_fatal_search_failure(self) -> bool:
+        return self.confirmed_count == 0 and self.has_search_failures
 
 
 @dataclass(frozen=True, slots=True)

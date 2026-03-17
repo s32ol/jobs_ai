@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..db import connect_database
+from .query_filter import job_matches_query
 from .scoring import ScoredJob, rank_jobs
 
 QUEUEABLE_JOBS_SQL = """
@@ -50,12 +51,16 @@ def select_ranked_apply_queue(
     *,
     limit: int | None = None,
     ingest_batch_id: str | None = None,
+    query_text: str | None = None,
 ) -> tuple[RankedQueuedJob, ...]:
     with closing(connect_database(database_path)) as connection:
         rows = connection.execute(
             QUEUEABLE_JOBS_SQL,
             (ingest_batch_id, ingest_batch_id),
         ).fetchall()
+
+    if query_text is not None:
+        rows = [row for row in rows if job_matches_query(row, query_text)]
 
     ranked_jobs = rank_jobs(rows)
     if limit is not None:
@@ -76,11 +81,13 @@ def select_apply_queue(
     *,
     limit: int | None = None,
     ingest_batch_id: str | None = None,
+    query_text: str | None = None,
 ) -> tuple[QueuedJob, ...]:
     ranked_queued_jobs = select_ranked_apply_queue(
         database_path,
         limit=limit,
         ingest_batch_id=ingest_batch_id,
+        query_text=query_text,
     )
     return tuple(
         QueuedJob(

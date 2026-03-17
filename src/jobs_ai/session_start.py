@@ -80,6 +80,8 @@ def start_session(
     created_at: datetime | None = None,
     ingest_batch_id: str | None = None,
     source_query: str | None = None,
+    job_query: str | None = None,
+    selection_scope: SessionSelectionScope | None = None,
 ) -> SessionStartResult:
     if executor_mode is not None and not open_urls:
         raise ValueError("--executor can only be used together with --open")
@@ -89,15 +91,20 @@ def start_session(
         default_exports_dir=default_exports_dir,
         out_dir=out_dir,
     )
-    selection_scope = _resolve_selection_scope(
-        database_path,
-        ingest_batch_id=ingest_batch_id,
-        source_query=source_query,
+    resolved_selection_scope = (
+        selection_scope
+        if selection_scope is not None
+        else _resolve_selection_scope(
+            database_path,
+            ingest_batch_id=ingest_batch_id,
+            source_query=source_query,
+        )
     )
     previews = select_launch_preview(
         database_path,
         limit=limit,
-        ingest_batch_id=selection_scope.batch_id if selection_scope is not None else None,
+        ingest_batch_id=ingest_batch_id,
+        query_text=job_query,
     )
     items = tuple(
         _build_session_start_item(
@@ -112,7 +119,7 @@ def start_session(
         limit=limit,
         created_at=created_at,
         label=label,
-        selection_scope=selection_scope,
+        selection_scope=resolved_selection_scope,
     )
     manifest = load_session_manifest(export_result.export_path)
     plan = build_launch_plan(manifest)
@@ -122,8 +129,12 @@ def start_session(
         manifest_path=export_result.export_path,
         item_count=len(previews),
         launchable_count=plan.launchable_items,
-        batch_id=selection_scope.batch_id if selection_scope is not None else None,
-        source_query=selection_scope.source_query if selection_scope is not None else None,
+        batch_id=ingest_batch_id,
+        source_query=(
+            resolved_selection_scope.source_query
+            if resolved_selection_scope is not None
+            else None
+        ),
         created_at=export_result.created_at,
     )
 
@@ -147,7 +158,7 @@ def start_session(
         limit=limit,
         open_requested=open_urls,
         executor_mode=resolved_executor_mode,
-        selection_scope=selection_scope,
+        selection_scope=resolved_selection_scope,
         session_history_id=session_history_id,
         execution_reports=execution_reports,
     )

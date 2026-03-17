@@ -1,0 +1,14 @@
+# Legacy low-confidence starter list: generic company names and domains
+# Prefer ats-tech or ats-data-ai for higher ATS confirmation rates.
+OpenAI | openai.com
+Google | google.com
+Microsoft | microsoft.com
+Apple | apple.com
+Amazon | amazon.jobs
+Meta | meta.com
+NVIDIA | nvidia.com
+Stripe | stripe.com
+Datadog | datadoghq.com
+Snowflake | snowflake.com
+Cloudflare | cloudflare.com
+MongoDB | mongodb.com

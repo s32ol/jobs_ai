@@ -10,9 +10,11 @@ from .session_manifest import ManifestSelection
 @dataclass(frozen=True, slots=True)
 class ApplicationAssistEntry:
     launch_order: int
+    job_id: int | None
     company: str | None
     title: str | None
     apply_url: str
+    portal_type: str | None
     recommended_resume_variant: ManifestSelection
     recommended_profile_snippet: ManifestSelection
 
@@ -44,9 +46,11 @@ def build_application_assist(plan: LaunchPlan) -> ApplicationAssist:
         assist_items.append(
             ApplicationAssistEntry(
                 launch_order=item.launch_order,
+                job_id=item.job_id,
                 company=item.company,
                 title=item.title,
                 apply_url=item.apply_url,
+                portal_type=item.portal_type,
                 recommended_resume_variant=item.recommended_resume_variant,
                 recommended_profile_snippet=item.recommended_profile_snippet,
             )
@@ -58,3 +62,23 @@ def build_application_assist(plan: LaunchPlan) -> ApplicationAssist:
         total_items=plan.total_items,
         assist_items=tuple(assist_items),
     )
+
+
+def select_application_assist_entry(
+    assist: ApplicationAssist,
+    *,
+    launch_order: int | None,
+) -> ApplicationAssistEntry:
+    if not assist.assist_items:
+        raise ValueError("manifest contains no launchable application assists")
+    if launch_order is None:
+        if len(assist.assist_items) == 1:
+            return assist.assist_items[0]
+        raise ValueError(
+            "provide --launch-order when the manifest contains more than one launchable application"
+        )
+
+    for entry in assist.assist_items:
+        if entry.launch_order == launch_order:
+            return entry
+    raise ValueError(f"launch order {launch_order} was not found in the manifest")
