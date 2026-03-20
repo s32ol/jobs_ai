@@ -133,6 +133,123 @@ class ApplicationPrefillTest(unittest.TestCase):
         )
         self.assertIn("Current Employer", result.unresolved_required_fields)
 
+    def test_run_application_prefill_greenhouse_matches_resume_by_identifier_and_ignores_hidden_required_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            manifest_path = tmp_path / "session.json"
+            profile_path = tmp_path / ".jobs_ai_applicant_profile.json"
+            resume_path = tmp_path / "resume.pdf"
+            resume_path.write_text("resume", encoding="utf-8")
+            _write_manifest(
+                manifest_path,
+                {
+                    "created_at": "2026-03-16T01:00:00Z",
+                    "item_count": 1,
+                    "items": [
+                        _complete_item(
+                            rank=1,
+                            company="Care Access",
+                            title="Enterprise Performance Analytics Engineer",
+                            apply_url="https://job-boards.greenhouse.io/careaccess/jobs/4052147009",
+                            portal_type="greenhouse",
+                            resume_key="analytics-engineering",
+                            resume_label="Analytics Engineering Resume",
+                            snippet_key="analytics-modeling",
+                            snippet_label="Analytics Modeling",
+                            snippet_text="Analytics engineering work centered on SQL modeling.",
+                        ),
+                    ],
+                },
+            )
+            _write_profile(
+                profile_path,
+                {
+                    "full_name": "Robert Morales",
+                    "email": "robert.morales.eng@gmail.com",
+                    "phone": "415-900-2819",
+                    "linkedin": "https://linkedin.com/in/s32ol",
+                    "resume_paths": {
+                        "analytics-engineering": str(resume_path),
+                    },
+                },
+            )
+            browser = FixturePrefillBrowserBackend(
+                {
+                    "https://job-boards.greenhouse.io/careaccess/jobs/4052147009": BrowserPageSnapshot(
+                        url="https://job-boards.greenhouse.io/careaccess/jobs/4052147009",
+                        title="Job Application for Enterprise Performance Analytics Engineer at Care Access",
+                        fields=(
+                            _field(
+                                "First Name*",
+                                selector="[data-jobs-ai-selector='jobs-ai-1']",
+                                name="first_name",
+                                required=True,
+                            ),
+                            _field(
+                                "Last Name*",
+                                selector="[data-jobs-ai-selector='jobs-ai-2']",
+                                name="last_name",
+                                required=True,
+                            ),
+                            _field(
+                                "Email*",
+                                selector="[data-jobs-ai-selector='jobs-ai-4']",
+                                name="email",
+                                required=True,
+                            ),
+                            _field(
+                                "Phone",
+                                selector="[data-jobs-ai-selector='jobs-ai-6']",
+                                control_type="tel",
+                                name="phone",
+                            ),
+                            _field(
+                                "Attach",
+                                selector="[data-jobs-ai-selector='jobs-ai-7']",
+                                control_type="file",
+                                name="resume",
+                                required=True,
+                            ),
+                            _field(
+                                "LinkedIn Profile",
+                                selector="[data-jobs-ai-selector='jobs-ai-21']",
+                                name="question_4371762009",
+                            ),
+                            _field(
+                                "",
+                                selector="[data-jobs-ai-selector='jobs-ai-10']",
+                                name=None,
+                                required=True,
+                                visible=False,
+                            ),
+                            _field(
+                                "",
+                                selector="[data-jobs-ai-selector='jobs-ai-23']",
+                                name=None,
+                                required=True,
+                                visible=False,
+                            ),
+                        ),
+                        submit_controls=("Submit application",),
+                    )
+                }
+            )
+
+            result = run_application_prefill(
+                manifest_path,
+                project_root=tmp_path,
+                applicant_profile_path=profile_path,
+                launch_order=None,
+                browser_backend=browser,
+            )
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.unresolved_required_fields, ())
+        self.assertEqual(
+            [field.field_key for field in result.filled_fields],
+            ["first_name", "last_name", "email", "phone", "linkedin_url", "resume"],
+        )
+
     def test_run_application_prefill_lever_uses_canned_answers_and_profile_short_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -360,6 +477,7 @@ def _field(
     *,
     selector: str,
     control_type: str = "text",
+    name: str | None = None,
     required: bool = False,
     visible: bool = True,
     options: tuple[BrowserFieldOption, ...] = (),
@@ -368,7 +486,7 @@ def _field(
         selector=selector,
         control_type=control_type,
         label=label,
-        name=None,
+        name=name,
         placeholder=None,
         required=required,
         visible=visible,

@@ -11,7 +11,12 @@ from .collect.cli import run_collect_command
 from .discover.cli import run_discover_command
 from .source_seed.cli import run_seed_sources_command
 from .application_assist import build_application_assist
-from .application_prefill import run_application_prefill
+from .application_log import (
+    APPLICATION_LOG_STATUSES,
+    normalize_application_log_status,
+    write_application_log,
+)
+from .application_prefill import ApplicationPrefillResult, run_application_prefill
 from .application_tracking import (
     APPLICATION_STATUSES,
     SESSION_MARK_APPLICATION_STATUSES,
@@ -46,6 +51,8 @@ from .main import (
     render_apply_error_report,
     render_apply_report,
     render_application_assist_error_report,
+    render_application_log_error_report,
+    render_application_log_report,
     render_application_prefill_report,
     render_application_assist_report,
     render_board_census_error_report,
@@ -184,7 +191,7 @@ app = typer.Typer(
         "Preferred modular flow: discover --collect --import -> session start -> "
         "open -> session mark.\n\n"
         "Advanced manual building blocks: score -> queue -> recommend -> "
-        "launch-preview -> apply -> open -> export-session -> preflight -> application-assist -> "
+        "launch-preview -> apply -> open -> export-session -> preflight -> application-assist -> application-log -> "
         "launch-dry-run -> track -> stats -> maintenance."
     ),
 )
@@ -271,6 +278,104 @@ def _build_launch_confirmation_prompt(
     tab_count = len(steps)
     tab_label = "application tab" if tab_count == 1 else "application tabs"
     return f"Open {tab_count} {tab_label} in {executor_mode} mode?"
+
+
+_APPLICATION_ASSIST_PROMPT_LOG_STATUSES = ("applied", "skipped", "opened", "failed")
+
+
+def _resolve_application_assist_log_options(
+    *,
+    prefill: bool,
+    log_outcome: bool,
+    log_status: str | None,
+    log_notes: str | None,
+) -> tuple[str | None, str | None, bool]:
+    normalized_log_notes = log_notes.strip() or None if log_notes is not None else None
+    logging_requested = log_outcome or log_status is not None or normalized_log_notes is not None
+    if logging_requested and not prefill:
+        raise ValueError("outcome logging options require --prefill")
+    if log_outcome and log_status is not None:
+        raise ValueError("use either --log-outcome or --log-status, not both")
+    if normalized_log_notes is not None and log_status is None and not log_outcome:
+        raise ValueError("--log-notes requires --log-status or --log-outcome")
+
+    normalized_log_status = (
+        normalize_application_log_status(log_status)
+        if log_status is not None
+        else None
+    )
+    return normalized_log_status, normalized_log_notes, log_outcome
+
+
+def _prompt_application_assist_log_status() -> str | None:
+    prompt_text = "Status? " f"[{'/'.join(_APPLICATION_ASSIST_PROMPT_LOG_STATUSES)}]"
+    while True:
+        response = click.prompt(
+            prompt_text,
+            default="",
+            show_default=False,
+        ).strip().lower()
+        if not response:
+            return None
+        if response in _APPLICATION_ASSIST_PROMPT_LOG_STATUSES:
+            return response
+        typer.echo(
+            "Invalid status. Choose one of: "
+            f"{', '.join(_APPLICATION_ASSIST_PROMPT_LOG_STATUSES)}. "
+            "Press Enter to skip."
+        )
+
+
+def _maybe_log_application_assist_outcome(
+    project_root: Path,
+    *,
+    result: ApplicationPrefillResult,
+    prompt_for_outcome: bool,
+    log_status: str | None,
+    log_notes: str | None,
+) -> None:
+    if log_status is None and not prompt_for_outcome:
+        return
+
+    resolved_log_status = log_status
+    resolved_log_notes = log_notes
+    if resolved_log_status is None:
+        resolved_log_status = _prompt_application_assist_log_status()
+        if resolved_log_status is None:
+            typer.echo("Outcome log skipped.")
+            return
+        resolved_log_notes = (
+            click.prompt(
+                "Notes? (optional, press Enter to skip)",
+                default=resolved_log_notes or "",
+                show_default=False,
+            ).strip()
+            or None
+        )
+
+    try:
+        log_result = write_application_log(
+            project_root,
+            company=result.company,
+            role=result.title,
+            portal=result.portal_type,
+            apply_url=result.original_apply_url,
+            status=resolved_log_status,
+            notes=resolved_log_notes,
+            manifest_path=result.manifest_path,
+            launch_order=result.launch_order,
+        )
+    except ValueError as exc:
+        typer.echo("Outcome logging failed after application-assist completed successfully.")
+        typer.echo(
+            render_application_log_error_report(
+                str(exc),
+                manifest_path=result.manifest_path,
+            )
+        )
+        return
+
+    typer.echo(render_application_log_report(log_result))
 
 
 @app.callback(invoke_without_command=True)
@@ -2123,12 +2228,38 @@ def application_assist(
         "--hold-open/--no-hold-open",
         help="Keep the automation browser open after prefilling so the operator can review and submit manually.",
     ),
+    log_outcome: bool = typer.Option(
+        False,
+        "--log-outcome",
+        help="After the browser closes, prompt for a lightweight application log.",
+    ),
+    log_status: str | None = typer.Option(
+        None,
+        "--log-status",
+        help=(
+            "Write this application log automatically after the browser closes. "
+            f"Allowed values: {', '.join(APPLICATION_LOG_STATUSES)}."
+        ),
+    ),
+    log_notes: str | None = typer.Option(
+        None,
+        "--log-notes",
+        help="Optional notes for post-run outcome logging.",
+    ),
 ) -> None:
     """Show read-only guidance or run review-first browser prefilling for one application."""
     try:
         manifest = load_session_manifest(manifest_path)
         plan = build_launch_plan(manifest)
         assist = build_application_assist(plan)
+        normalized_log_status, normalized_log_notes, prompt_for_log_outcome = (
+            _resolve_application_assist_log_options(
+                prefill=prefill,
+                log_outcome=log_outcome,
+                log_status=log_status,
+                log_notes=log_notes,
+            )
+        )
     except ValueError as exc:
         typer.echo(render_application_assist_error_report(manifest_path, str(exc)))
         raise typer.Exit(code=1)
@@ -2170,6 +2301,89 @@ def application_assist(
             click.prompt("", prompt_suffix="", default="", show_default=False)
     finally:
         browser.close()
+    _maybe_log_application_assist_outcome(
+        paths.project_root,
+        result=result,
+        prompt_for_outcome=prompt_for_log_outcome,
+        log_status=normalized_log_status,
+        log_notes=normalized_log_notes,
+    )
+
+
+@app.command("application-log")
+def application_log(
+    company: str | None = typer.Option(
+        None,
+        "--company",
+        help="Company name. Required unless populated from --manifest.",
+    ),
+    role: str | None = typer.Option(
+        None,
+        "--role",
+        help="Role or title. Required unless populated from --manifest.",
+    ),
+    portal: str | None = typer.Option(
+        None,
+        "--portal",
+        help="Portal name or type. Required unless inferred from --apply-url or populated from --manifest.",
+    ),
+    apply_url: str | None = typer.Option(
+        None,
+        "--apply-url",
+        help="Application URL. Required unless populated from --manifest.",
+    ),
+    status: str = typer.Option(
+        ...,
+        "--status",
+        help=f"Application outcome to log: {', '.join(APPLICATION_LOG_STATUSES)}.",
+    ),
+    notes: str | None = typer.Option(
+        None,
+        "--notes",
+        help="Optional notes about manual fixes, blockers, or submit outcome.",
+    ),
+    manifest: Path | None = typer.Option(
+        None,
+        "--manifest",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help="Optional session manifest path to populate company, role, portal, and apply_url.",
+    ),
+    launch_order: int | None = typer.Option(
+        None,
+        "--launch-order",
+        min=1,
+        help="Launch order from the manifest to log.",
+    ),
+) -> None:
+    """Write one JSON application log under data/applications for a manual outcome."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = write_application_log(
+            paths.project_root,
+            company=company,
+            role=role,
+            portal=portal,
+            apply_url=apply_url,
+            status=status,
+            notes=notes,
+            manifest_path=manifest,
+            launch_order=launch_order,
+        )
+    except ValueError as exc:
+        typer.echo(
+            render_application_log_error_report(
+                str(exc),
+                manifest_path=manifest,
+            )
+        )
+        raise typer.Exit(code=1)
+    typer.echo(render_application_log_report(result))
 
 
 @app.command("portal-hint")

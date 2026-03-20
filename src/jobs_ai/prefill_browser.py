@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+import sys
 from typing import Protocol, runtime_checkable
+
+from .autofill.profile_config import (
+    BROWSER_PROFILE_DIRECTORY_ENV_VAR,
+    LocalPlaywrightProfileConfig,
+    resolve_local_playwright_profile_config,
+)
 
 SUPPORTED_PREFILL_BROWSER_BACKENDS = ("playwright",)
 
@@ -117,28 +124,109 @@ class FixturePrefillBrowserBackend:
 class PlaywrightPrefillBrowserBackend:
     backend_name = "playwright"
 
-    def __init__(self, *, headless: bool = False) -> None:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:
-            raise ValueError(
-                "Playwright is not installed. Install it in the project environment to use "
-                "browser-fill mode."
-            ) from exc
+    def __init__(
+        self,
+        *,
+        headless: bool = False,
+        profile_config: LocalPlaywrightProfileConfig | None = None,
+        sync_playwright_factory=None,
+    ) -> None:
+        if sync_playwright_factory is None:
+            try:
+                from playwright.sync_api import sync_playwright
+            except ImportError as exc:
+                raise ValueError(
+                    "Playwright is not installed. Install it in the project environment to use "
+                    "browser-fill mode."
+                ) from exc
+            sync_playwright_factory = sync_playwright
 
-        self._sync_playwright = sync_playwright
+        self._sync_playwright = sync_playwright_factory
         self._playwright_context = None
         self._browser = None
+        self._browser_context = None
         self._page = None
         self._headless = headless
+        self._profile_config = profile_config
 
     def open_url(self, url: str) -> None:
         if self._page is None:
-            self._playwright_context = self._sync_playwright().start()
-            self._browser = self._playwright_context.chromium.launch(headless=self._headless)
-            self._page = self._browser.new_page()
+            try:
+                self._playwright_context = self._sync_playwright().start()
+                if self._profile_config is None:
+                    self._browser = self._playwright_context.chromium.launch(headless=self._headless)
+                    self._page = self._browser.new_page()
+                else:
+                    self._browser_context = self._launch_persistent_context_with_fallback()
+                    pages = tuple(self._browser_context.pages)
+                    self._page = pages[0] if pages else self._browser_context.new_page()
+            except Exception as exc:
+                self.close()
+                if self._profile_config is not None:
+                    if self._profile_config.profile_directory is None:
+                        profile_hint = (
+                            "Close other Chrome windows using that user data dir, or set "
+                            f"{BROWSER_PROFILE_DIRECTORY_ENV_VAR} to an existing profile inside "
+                            f"{self._profile_config.user_data_dir}. "
+                        )
+                    else:
+                        profile_hint = (
+                            "Close other Chrome windows using "
+                            f"{self._profile_config.profile_directory!r}, or point "
+                            f"{BROWSER_PROFILE_DIRECTORY_ENV_VAR} at a separate profile. "
+                        )
+                    raise ValueError(
+                        "Playwright could not launch the configured local Chrome profile for "
+                        f"application-assist --prefill. {profile_hint}"
+                        f"Underlying error: {exc}"
+                    ) from exc
+                raise ValueError(f"Playwright could not launch the browser backend: {exc}") from exc
         assert self._page is not None
         self._page.goto(url, wait_until="domcontentloaded")
+        self._settle_page_after_navigation()
+
+    def _settle_page_after_navigation(self) -> None:
+        if self._page is None:
+            return
+        try:
+            self._page.wait_for_load_state("networkidle", timeout=1000)
+        except Exception:
+            pass
+        # Modern hosted application pages often hydrate after domcontentloaded.
+        # Give the client app one more beat so controlled inputs are stable
+        # before snapshotting and filling.
+        self._page.wait_for_timeout(250)
+
+    def _launch_persistent_context_with_fallback(self):
+        assert self._playwright_context is not None
+        assert self._profile_config is not None
+        launch_error: Exception | None = None
+        for profile_config in _persistent_launch_attempts(self._profile_config):
+            try:
+                launch_kwargs = self._persistent_launch_kwargs(profile_config)
+                return self._playwright_context.chromium.launch_persistent_context(
+                    str(_persistent_launch_user_data_dir(profile_config)),
+                    **launch_kwargs,
+                )
+            except Exception as exc:
+                launch_error = exc
+        assert launch_error is not None
+        raise launch_error
+
+    def _persistent_launch_kwargs(
+        self,
+        profile_config: LocalPlaywrightProfileConfig,
+    ) -> dict[str, object]:
+        kwargs: dict[str, object] = {
+            "headless": self._headless,
+        }
+        if profile_config.channel is not None:
+            kwargs["channel"] = profile_config.channel
+        if profile_config.launch_args:
+            kwargs["args"] = list(profile_config.launch_args)
+        if _persistent_uses_native_window(profile_config):
+            kwargs["no_viewport"] = True
+        return kwargs
 
     def snapshot(self) -> BrowserPageSnapshot:
         if self._page is None:
@@ -201,6 +289,9 @@ class PlaywrightPrefillBrowserBackend:
         self._page.locator(selector).set_input_files(str(file_path))
 
     def close(self) -> None:
+        if self._browser_context is not None:
+            self._browser_context.close()
+            self._browser_context = None
         if self._browser is not None:
             self._browser.close()
             self._browser = None
@@ -212,9 +303,13 @@ class PlaywrightPrefillBrowserBackend:
 
 def create_prefill_browser_backend(
     backend_name: str,
+    *,
+    env: Mapping[str, str] | None = None,
 ) -> PrefillBrowserBackend:
     if backend_name == "playwright":
-        return PlaywrightPrefillBrowserBackend()
+        return PlaywrightPrefillBrowserBackend(
+            profile_config=resolve_local_playwright_profile_config(env),
+        )
     supported = ", ".join(SUPPORTED_PREFILL_BROWSER_BACKENDS)
     raise ValueError(f"unsupported prefill browser backend: {backend_name}; expected one of: {supported}")
 
@@ -234,6 +329,74 @@ def _optional_string(value: object) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+def _persistent_uses_native_window(
+    profile_config: LocalPlaywrightProfileConfig,
+) -> bool:
+    # Playwright's Chromium startup only calls Browser.getWindowForTarget when
+    # it is managing the default viewport. For the local macOS dedicated
+    # user-data-dir flow, use the native Chrome window instead so this
+    # review-first browser path stays closer to a normal visible local launch.
+    if (
+        sys.platform == "darwin"
+        and profile_config.profile_directory is None
+    ):
+        return True
+    return False
+
+
+def _persistent_launch_user_data_dir(
+    profile_config: LocalPlaywrightProfileConfig,
+) -> Path:
+    user_data_dir = profile_config.user_data_dir
+    if not _persistent_uses_dedicated_chromium_profile_dir(profile_config):
+        return user_data_dir
+    profile_name = user_data_dir.name
+    lowered_name = profile_name.lower()
+    if "chromium" in lowered_name:
+        return user_data_dir
+    if "chrome" in lowered_name:
+        start = lowered_name.index("chrome")
+        chromium_name = f"{profile_name[:start]}chromium{profile_name[start + len('chrome'):]}"
+    else:
+        chromium_name = f"{profile_name}-chromium"
+    return user_data_dir.with_name(chromium_name)
+
+
+def _persistent_launch_attempts(
+    profile_config: LocalPlaywrightProfileConfig,
+) -> tuple[LocalPlaywrightProfileConfig, ...]:
+    fallback = _fallback_profile_config(profile_config)
+    if fallback is None:
+        return (profile_config,)
+    return (profile_config, fallback)
+
+
+def _fallback_profile_config(
+    profile_config: LocalPlaywrightProfileConfig,
+) -> LocalPlaywrightProfileConfig | None:
+    if (
+        sys.platform == "darwin"
+        and profile_config.profile_directory is None
+        and profile_config.channel == "chrome"
+    ):
+        return LocalPlaywrightProfileConfig(
+            channel=None,
+            user_data_dir=profile_config.user_data_dir,
+            profile_directory=profile_config.profile_directory,
+        )
+    return None
+
+
+def _persistent_uses_dedicated_chromium_profile_dir(
+    profile_config: LocalPlaywrightProfileConfig,
+) -> bool:
+    return (
+        sys.platform == "darwin"
+        and profile_config.profile_directory is None
+        and profile_config.channel is None
+    )
 
 
 _PLAYWRIGHT_SNAPSHOT_SCRIPT = """
@@ -256,7 +419,32 @@ _PLAYWRIGHT_SNAPSHOT_SCRIPT = """
     return normalized || null;
   };
 
+  const textFromIds = (value) => {
+    const ids = text(value);
+    if (!ids) {
+      return null;
+    }
+    for (const id of ids.split(/\\s+/).filter(Boolean)) {
+      const labelledElement = document.getElementById(id);
+      if (!labelledElement) {
+        continue;
+      }
+      const labelledText = text(labelledElement.innerText || labelledElement.textContent || "");
+      if (labelledText) {
+        return labelledText;
+      }
+    }
+    return null;
+  };
+
   const labelFor = (element) => {
+    if ((element.getAttribute("type") || "").toLowerCase() === "file") {
+      const uploadGroup = element.closest('[role="group"][aria-labelledby]');
+      const uploadLabel = uploadGroup ? textFromIds(uploadGroup.getAttribute("aria-labelledby")) : null;
+      if (uploadLabel) {
+        return uploadLabel;
+      }
+    }
     const labels = element.labels ? Array.from(element.labels) : [];
     for (const label of labels) {
       const value = text(label.innerText || label.textContent || "");
@@ -268,18 +456,23 @@ _PLAYWRIGHT_SNAPSHOT_SCRIPT = """
     if (ariaLabel) {
       return ariaLabel;
     }
-    const labelledBy = text(element.getAttribute("aria-labelledby") || "");
+    const labelledBy = textFromIds(element.getAttribute("aria-labelledby") || "");
     if (labelledBy) {
-      const ids = labelledBy.split(/\\s+/).filter(Boolean);
-      for (const id of ids) {
-        const labelledElement = document.getElementById(id);
-        if (!labelledElement) {
-          continue;
-        }
-        const value = text(labelledElement.innerText || labelledElement.textContent || "");
-        if (value) {
-          return value;
-        }
+      return labelledBy;
+    }
+    const ancestorLabelledBy = element.parentElement?.closest("[aria-labelledby]");
+    if (ancestorLabelledBy) {
+      const value = textFromIds(ancestorLabelledBy.getAttribute("aria-labelledby") || "");
+      if (value) {
+        return value;
+      }
+    }
+    const fieldset = element.closest("fieldset");
+    if (fieldset) {
+      const legend = fieldset.querySelector("legend");
+      const legendText = legend ? text(legend.innerText || legend.textContent || "") : null;
+      if (legendText) {
+        return legendText;
       }
     }
     return null;
@@ -298,7 +491,20 @@ _PLAYWRIGHT_SNAPSHOT_SCRIPT = """
 
   const isVisible = (element) => {
     const style = window.getComputedStyle(element);
-    return style.display !== "none" && style.visibility !== "hidden";
+    if (
+      style.display === "none"
+      || style.visibility === "hidden"
+      || style.opacity === "0"
+      || element.hidden
+      || element.getAttribute("aria-hidden") === "true"
+    ) {
+      return false;
+    }
+    const rects = element.getClientRects();
+    if (!rects.length) {
+      return false;
+    }
+    return Array.from(rects).some((rect) => rect.width > 0 || rect.height > 0);
   };
 
   const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((element, index) => {
@@ -314,7 +520,7 @@ _PLAYWRIGHT_SNAPSHOT_SCRIPT = """
       selector: ensureSelector(element, index + 1),
       control_type: type,
       label: labelFor(element),
-      name: text(element.getAttribute("name") || ""),
+      name: text(element.getAttribute("name") || element.getAttribute("id") || ""),
       placeholder: text(element.getAttribute("placeholder") || ""),
       required: Boolean(element.required || element.getAttribute("aria-required") === "true"),
       visible: isVisible(element) || type === "file",

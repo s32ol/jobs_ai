@@ -137,6 +137,34 @@ jobs-ai session start --limit 20 --open --executor remote_print
 
 This prints the application URLs to stdout for local clicking/copying while preserving the normal manifest export, dry-run planning, and manual-review flow.
 
+### `jobs-ai application-assist --prefill`
+
+Open one application in a review-first Playwright browser session, fill supported safe fields, upload the recommended resume, and stop before submit.
+
+On local macOS runs, `application-assist --prefill` reuses a dedicated Chrome profile by default:
+
+- browser channel: `chrome`
+- user data dir: `~/Library/Application Support/Google/Chrome`
+- profile directory: `Profile 2`
+
+Override those defaults with:
+
+- `JOBS_AI_BROWSER_CHANNEL`
+- `JOBS_AI_BROWSER_USER_DATA_DIR`
+- `JOBS_AI_BROWSER_PROFILE_DIRECTORY`
+
+Only the local autofill/browser-assist path uses these settings. Other commands and remote/server-safe workflows keep their existing behavior.
+
+When you want a faster handoff after manual review, add `--log-outcome` to prompt for status/notes after the browser closes, or use `--log-status ... --log-notes ...` to write the application log non-interactively on exit.
+
+### `jobs-ai application-log`
+
+Write one JSON log per manually handled application under `data/applications/`.
+
+```bash
+jobs-ai application-log --manifest data/exports/<session-manifest>.json --launch-order 2 --status applied --notes "prefill + manual fix"
+```
+
 ### `jobs-ai session recent`
 
 Review recently created session manifests.

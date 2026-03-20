@@ -16,6 +16,7 @@ from .application_tracking import (
     ApplicationStatusSnapshot,
 )
 from .application_assist import ApplicationAssist
+from .application_log import ApplicationLogResult
 from .application_prefill import ApplicationPrefillResult
 from .config import GEOGRAPHY_PRIORITY, SEARCH_PRIORITY, TARGET_ROLES, Settings
 from .db import REQUIRED_TABLES, SessionHistoryEntry
@@ -2712,6 +2713,46 @@ def render_application_assist_error_report(manifest_path: Path, error: str) -> s
         f"error: {error}",
     ]
     _append_guidance(lines, "next:", (_cli_example(f"preflight {manifest_path}"),))
+    return "\n".join(lines)
+
+
+def render_application_log_report(result: ApplicationLogResult) -> str:
+    logged_application = (
+        f"[{result.launch_order}] {result.record.company} - {result.record.role}"
+        if result.launch_order is not None
+        else f"{result.record.company} - {result.record.role}"
+    )
+    lines = [
+        "jobs_ai application-log",
+        f"Logged application {logged_application}",
+        "status: success",
+        f"portal: {result.record.portal}",
+        f"apply_url: {result.record.apply_url}",
+        f"application status: {result.record.status}",
+        f"timestamp: {result.record.timestamp}",
+        f"log path: {result.log_path}",
+    ]
+    if result.manifest_path is not None:
+        lines.insert(1, f"manifest path: {result.manifest_path}")
+    if result.record.notes is not None:
+        lines.append(f"notes: {result.record.notes}")
+    return "\n".join(lines)
+
+
+def render_application_log_error_report(
+    error: str,
+    *,
+    manifest_path: Path | None = None,
+) -> str:
+    lines = ["jobs_ai application-log"]
+    if manifest_path is not None:
+        lines.append(f"manifest path: {manifest_path}")
+    lines.extend(
+        [
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
     return "\n".join(lines)
 
 
