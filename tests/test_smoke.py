@@ -39,6 +39,9 @@ class SmokeTest(unittest.TestCase):
         settings = load_settings({})
         self.assertEqual(settings.environment, "dev")
         self.assertEqual(settings.profile, "default")
+        self.assertEqual(settings.database_backend, "sqlite")
+        self.assertEqual(settings.database_backend_source, "default")
+        self.assertTrue(settings.database_fallback_triggered)
         self.assertEqual(settings.database_path, Path("data/jobs_ai.db"))
 
     def test_workspace_helpers_create_expected_directories(self) -> None:

@@ -1,0 +1,70 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.analysis.extraPaths": [
+      "${workspaceFolder}/src"
+    ],
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": [
+      "tests"
+    ],
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "terminal.integrated.profiles.linux": {
+      "jobs_ai": {
+        "path": "/bin/bash",
+        "args": [
+          "-i",
+          "-c",
+          "jobs_ai; exec /bin/bash -i"
+        ]
+      }
+    },
+    "terminal.integrated.defaultProfile.linux": "jobs_ai",
+    "files.exclude": {
+      ".venv": true,
+      "**/__pycache__": true,
+      "**/.pytest_cache": true,
+      "**/.mypy_cache": true,
+      "**/.ruff_cache": true,
+      "src/jobs_ai.egg-info": true,
+      "build": true,
+      "dist": true
+    },
+    "search.exclude": {
+      ".venv": true,
+      "**/__pycache__": true,
+      "**/.pytest_cache": true,
+      "**/.mypy_cache": true,
+      "**/.ruff_cache": true,
+      "src/jobs_ai.egg-info": true,
+      "build": true,
+      "dist": true,
+      "data/exports": true,
+      "data/processed": true,
+      "exports": true,
+      "logs": true,
+      "sessions": true
+    },
+    "files.watcherExclude": {
+      ".venv/**": true,
+      "**/__pycache__/**": true,
+      "**/.pytest_cache/**": true,
+      "**/.mypy_cache/**": true,
+      "**/.ruff_cache/**": true,
+      "src/jobs_ai.egg-info/**": true,
+      "build/**": true,
+      "dist/**": true,
+      "data/exports/**": true,
+      "data/processed/**": true,
+      "exports/**": true,
+      "logs/**": true,
+      "sessions/**": true
+    }
+  }
+}

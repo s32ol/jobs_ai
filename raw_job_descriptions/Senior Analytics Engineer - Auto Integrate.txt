@@ -1,0 +1,187 @@
+Fleetio Logo
+Back to jobs
+Senior Analytics Engineer - Auto Integrate
+Remote - USA, CAN, MEX
+
+A little about us…Fleetio is a modern software platform that helps thousands of organizations worldwide manage their fleet operations. Transportation technology is a hot market, and we’re leading the charge with raving fans and new customers signing up every day. We raised $450M in our Series D funding round in March of 2025 and are on an exciting trajectory as a company. Fleetio is also a proud founding member of the Rails Foundation!
+
+More about our team and company:
+
+    Fleetio overview video: https://www.youtube.com/watch?v=YoXyXTFWbkg
+    Our careers page: https://www.fleetio.com/careers
+
+About Fleetio & Auto Integrate
+
+Fleetio is a modern fleet operations platform used by thousands of organizations worldwide to manage vehicles, equipment, and drivers. Auto Integrate, acquired by Fleetio in 2025, is a leading global maintenance authorization network that supports fleets that outsource their service, maintenance, and repair needs. The business is managed by a small, global team within Fleetio, combining the resources of a scaled SaaS company with the agility of a niche market leader.
+Description
+
+We are looking for a Senior Analytics Engineer to play a foundational role in building Auto Integrates’ internal analytics infrastructure. In this role, you will design and implement the systems that power reporting, operational visibility, and product analytics across the organization.
+
+You will focus primarily on building and scaling our internal data platform from the ground up. In close partnership with Product & Engineering, you will also help integrate analytics directly into the platform — enabling data-driven features, reporting, and insights for our customers.
+
+You will collaborate closely with leadership, engineering, and other internal stakeholders to ensure data aligns with business needs and supports strategic objectives. This is an opportunity to shape the foundation of Auto Integrate's analytics ecosystem, where data plays a central role in how we operate, how we grow, and how we deliver value to customers.
+
+This position will require experience in building a data platform from the ground up, enabling the team to access analytics in ways they have not before. If you are more interested in building upon and improving an existing data platform, check out our other Senior Analytics Engineer job posting: https://job-boards.greenhouse.io/fleetio/jobs/5054939007.
+Who you are
+
+The ideal candidate for this role is a business-savvy senior-level analytics engineer with experience in building and owning complex analytics platforms and working closely with stakeholders. You’re comfortable starting from a relatively open landscape and defining scalable architecture, modeling standards, and best practices. You have a deep understanding of data modeling, data transformation, and data warehousing on modern data platforms. Your experience goes beyond just data engineering; you have a strong foundation in analytics and have worked closely with customer-facing products. You bring strong but adaptable opinions on design patterns, architecture, and data modeling, and you are passionate about solving business challenges by delivering scalable, data-driven solutions. You have a knack for translating ambiguous business questions into clear, actionable data insights and incrementally deliver impactful results. Product-minded and team-oriented, you actively listen to others’ perspectives and educate on best practices. Excellent communication, especially written, is one of your strengths.
+Your impact
+
+    Enable self-service analytics for all team members by designing clean, intuitive data models and metrics through dbt, empowering employees to make informed, data-driven decisions.
+    Develop and refine custom data pipelines that ingest data from operational systems to our analytics platform, handling both streaming and batch data using third-party tooling and home-grown solutions
+    Maintain and optimize the data platform infrastructure, focusing on data quality, ELT efficiency, and platform hygiene.
+    Architect and implement key components of the analytics infrastructure, such as BI, semantic layers, and foundational data warehouse.
+    Develop and maintain streaming data pipelines from a variety of databases and data sources
+    Collaborate across business units to understand data needs and ensure required data is collected, modeled, and available to team members.
+    Document best practices and coach/advise other data analysts, product managers, engineers, etc. on data modeling, SQL query optimization & reusability, etc. Keep our data platform tidy by managing roles and permissions and deprecating old projects.
+
+Your experience
+
+    5+ years of experience with a proven track record in data or analytics engineering.
+    Experience transforming raw data into clean models using standard tools of the modern data stack and a deep understanding of ELT and data modeling concepts.
+    Hands-on experience building and orchestrating ELT pipelines using Azure Data Factory
+    Experience with Microsoft SQL Server.
+    Proficiency in Python and orchestration tooling like Prefect or Dagster.
+    Experience in designing, building, and administering modern data pipelines and data warehouses.
+    Experience with dbt.
+    Experience with semantic layers like Snowflake's semantic views, Cube, or Metricflow.
+    Experience with Snowflake, BigQuery, or Redshift.
+    Experience with version control tools such as GitHub or GitLab.
+    Experience with CI/CD and IaaC tooling such as GitHub Actions and Terraform.
+    Experience with business intelligence solutions (Metabase, Looker, Tableau)
+    Excellent communication and project management skills with a customer service-focused mindset.
+
+Considered a plus
+
+    Experience with data marketplaces/private sharing technologies such as Snowflake Marketplace or AWS Data Exchange.
+    Experience with ELT tools such as Stitch or Fivetran.
+    Experience contributing to open-source projects.
+    Experience with streaming data and pipelines such as Kafka or Kinesis.
+    Experience with full-stack engineering.
+
+ 
+Benefits 
+
+    Multiple health/dental coverage options (100% coverage for employee, 50% for family)
+    Vision insurance
+    Incentive stock options
+    401(k) match of 4%
+    PTO - 4 weeks (increases at year two!)
+    12 company holidays + 2 floating holidays
+    Parental leave - birthing parent (16 weeks paid) non-birthing (4 weeks paid)
+    FSA & HSA options
+    Short and long term disability (short term 100% paid)
+    Community service funds
+    Professional development funds
+    Wellbeing fund - $150 quarterly
+    Business expense stipend - $125 quarterly
+    Mac laptop + new hire equipment stipend
+    Fully stocked kitchen with tons of drinks & snacks (BHM only)
+    Remote working friendly since 2012 #LI-REMOTE
+
+Fleetio provides equal employment opportunities to all employees and applicants and prohibits discrimination and harassment. We celebrate diversity and are committed to creating an inclusive environment for all. All employment is decided on the basis of qualifications, merit and business need.
+
+This application is not intended to and does not create a contract or offer of employment. Employment with Fleetio is at will.
+
+If you have a disability or a special need that requires an accommodation to fill out the online application, please let us know by calling (205) 718-7500.
+
+Create a Job Alert
+
+Interested in building your career at Fleetio? Get future opportunities sent straight to your email.
+Create alert
+Apply for this job
+
+*
+
+indicates a required field
+First Name*
+Last Name*
+Email*
+Phone
+Country*
++1
+Phone*
+Resume/CV*
+
+2026_Morales_Robert_Resume-2.pdf
+Cover Letter
+Attach
+Enter manually
+
+Accepted file types: pdf, doc, docx, txt, rtf
+Do you reside in the United States, Canada, or Mexico? Please note, this role is only open to candidates who live in the three countries listed above. *
+Select...
+Do you require visa sponsorship now or in the future? *
+Select...
+Do you have experience using 2+ dbt to build out data models for analysis? *
+Select...
+Please elaborate on your experience building and scaling a data platform from the ground up.*
+Please elaborate on your experience with working with stakeholders.*
+Did someone from Fleetio refer you? If so, share their name below. If not, list "N/A".*
+LinkedIn Profile*
+Voluntary Self-Identification
+
+For government reporting purposes, we ask candidates to respond to the below self-identification survey. Completion of the form is entirely voluntary. Whatever your decision, it will not be considered in the hiring process or thereafter. Any information that you do provide will be recorded and maintained in a confidential file.
+
+As set forth in Fleetio’s Equal Employment Opportunity policy, we do not discriminate on the basis of any protected group status under any applicable law.
+Gender
+Male
+Are you Hispanic/Latino?
+Yes
+Race & Ethnicity Definitions
+
+If you believe you belong to any of the categories of protected veterans listed below, please indicate by making the appropriate selection. As a government contractor subject to the Vietnam Era Veterans Readjustment Assistance Act (VEVRAA), we request this information in order to measure the effectiveness of the outreach and positive recruitment efforts we undertake pursuant to VEVRAA. Classification of protected categories is as follows:
+
+A "disabled veteran" is one of the following: a veteran of the U.S. military, ground, naval or air service who is entitled to compensation (or who but for the receipt of military retired pay would be entitled to compensation) under laws administered by the Secretary of Veterans Affairs; or a person who was discharged or released from active duty because of a service-connected disability.
+
+A "recently separated veteran" means any veteran during the three-year period beginning on the date of such veteran's discharge or release from active duty in the U.S. military, ground, naval, or air service.
+
+An "active duty wartime or campaign badge veteran" means a veteran who served on active duty in the U.S. military, ground, naval or air service during a war, or in a campaign or expedition for which a campaign badge has been authorized under the laws administered by the Department of Defense.
+
+An "Armed forces service medal veteran" means a veteran who, while serving on active duty in the U.S. military, ground, naval or air service, participated in a United States military operation for which an Armed Forces service medal was awarded pursuant to Executive Order 12985.
+Veteran Status
+I am not a protected veteran
+Voluntary Self-Identification of Disability
+Form CC-305
+Page 1 of 1
+OMB Control Number 1250-0005
+Expires 04/30/2026
+
+Why are you being asked to complete this form?
+
+We are a federal contractor or subcontractor. The law requires us to provide equal employment opportunity to qualified people with disabilities. We have a goal of having at least 7% of our workers as people with disabilities. The law says we must measure our progress towards this goal. To do this, we must ask applicants and employees if they have a disability or have ever had one. People can become disabled, so we need to ask this question at least every five years.
+
+Completing this form is voluntary, and we hope that you will choose to do so. Your answer is confidential. No one who makes hiring decisions will see it. Your decision to complete the form and your answer will not harm you in any way. If you want to learn more about the law or this form, visit the U.S. Department of Labor’s Office of Federal Contract Compliance Programs (OFCCP) website at www.dol.gov/ofccp.
+How do you know if you have a disability?
+
+A disability is a condition that substantially limits one or more of your “major life activities.” If you have or have ever had such a condition, you are a person with a disability. Disabilities include, but are not limited to:
+
+    Alcohol or other substance use disorder (not currently using drugs illegally)
+    Autoimmune disorder, for example, lupus, fibromyalgia, rheumatoid arthritis, HIV/AIDS
+    Blind or low vision
+    Cancer (past or present)
+    Cardiovascular or heart disease
+    Celiac disease
+    Cerebral palsy
+    Deaf or serious difficulty hearing
+    Diabetes
+    Disfigurement, for example, disfigurement caused by burns, wounds, accidents, or congenital disorders
+    Epilepsy or other seizure disorder
+    Gastrointestinal disorders, for example, Crohn's Disease, irritable bowel syndrome
+    Intellectual or developmental disability
+    Mental health conditions, for example, depression, bipolar disorder, anxiety disorder, schizophrenia, PTSD
+    Missing limbs or partially missing limbs
+    Mobility impairment, benefiting from the use of a wheelchair, scooter, walker, leg brace(s) and/or other supports
+    Nervous system condition, for example, migraine headaches, Parkinson’s disease, multiple sclerosis (MS)
+    Neurodivergence, for example, attention-deficit/hyperactivity disorder (ADHD), autism spectrum disorder, dyslexia, dyspraxia, other learning disabilities
+    Partial or complete paralysis (any cause)
+    Pulmonary or respiratory conditions, for example, tuberculosis, asthma, emphysema
+    Short stature (dwarfism)
+    Traumatic brain injury
+
+Disability Status
+No, I do not have a disability and have not had one in the past
+
+PUBLIC BURDEN STATEMENT: According to the Paperwork Reduction Act of 1995 no persons are required to respond to a collection of information unless such collection displays a valid OMB control number. This survey should take about 5 minutes to complete.
+
+Powered by

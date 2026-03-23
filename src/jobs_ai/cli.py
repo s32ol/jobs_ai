@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+import sqlite3
 
 import click
 import typer
@@ -26,6 +27,9 @@ from .application_tracking import (
 )
 from .config import load_settings
 from .db import initialize_schema, missing_required_tables
+from .db_merge import merge_sqlite_databases
+from .db_postgres import build_backend_status, migrate_sqlite_to_postgres, ping_database_target
+from .db_runtime import database_exists, resolve_database_runtime
 from .maintenance import backfill_jobs_metadata
 from .jobs.importer import JobImportResult, import_jobs_from_file
 from .jobs.fast_apply import (
@@ -70,6 +74,12 @@ from .main import (
     render_run_json,
     render_run_report,
     render_db_init_report,
+    render_db_backend_status_report,
+    render_db_merge_error_report,
+    render_db_merge_report,
+    render_db_migrate_to_postgres_error_report,
+    render_db_migrate_to_postgres_report,
+    render_db_ping_report,
     render_db_status_report,
     render_doctor_report,
     render_maintenance_backfill_error_report,
@@ -197,8 +207,8 @@ app = typer.Typer(
 )
 db_app = typer.Typer(
     help=(
-        "Manage the local SQLite database.\n\n"
-        "Use db init for a fresh workspace, then db status before importing leads."
+        "Manage SQLite and Postgres database backends.\n\n"
+        "Use db backend-status/db ping to inspect the active backend, then db init or db migrate-to-postgres as needed."
     )
 )
 track_app = typer.Typer(
@@ -2428,15 +2438,7 @@ def track_mark(
     typer.echo(render_application_tracking_mark_report(paths, snapshot))
 
 
-@track_app.command("list")
-def track_list(
-    status: str | None = typer.Option(
-        None,
-        "--status",
-        help=f"Optional current-status filter: {', '.join(APPLICATION_STATUSES)}.",
-    ),
-) -> None:
-    """List current application statuses in deterministic job order."""
+def _run_track_list(status: str | None) -> None:
     settings, paths = _load_runtime()
     del settings
     ensure_workspace(paths)
@@ -2447,6 +2449,24 @@ def track_list(
         typer.echo(render_application_tracking_error_report("list", paths, str(exc)))
         raise typer.Exit(code=1)
     typer.echo(render_application_tracking_list_report(paths, snapshots, status_filter=status))
+
+
+@app.command("applied")
+def applied() -> None:
+    """Shortcut for viewing jobs currently tracked as applied."""
+    _run_track_list(status="applied")
+
+
+@track_app.command("list")
+def track_list(
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help=f"Optional current-status filter: {', '.join(APPLICATION_STATUSES)}.",
+    ),
+) -> None:
+    """List current application statuses in deterministic job order."""
+    _run_track_list(status=status)
 
 
 @track_app.command("status")
@@ -2468,23 +2488,195 @@ def track_status(
 
 @db_app.command("init")
 def db_init() -> None:
-    """Create the local SQLite database and required tables."""
+    """Create the schema for the active database backend."""
     settings, paths = _load_runtime()
-    del settings
+    runtime = resolve_database_runtime(paths.database_path, settings=settings)
     created_paths = ensure_workspace(paths)
-    initialize_schema(paths.database_path)
-    typer.echo(render_db_init_report(paths, created_paths))
+    try:
+        initialize_schema(paths.database_path)
+    except Exception as exc:
+        typer.echo(
+            "\n".join(
+                [
+                    "jobs_ai database init",
+                    f"database backend: {runtime.backend}",
+                    f"database target: {runtime.target_label}",
+                    "status: failed",
+                    f"error: {exc}",
+                ]
+            )
+        )
+        raise typer.Exit(code=1)
+    typer.echo(
+        render_db_init_report(
+            paths,
+            created_paths,
+            backend=runtime.backend,
+            target_label=runtime.target_label,
+        )
+    )
 
 
 @db_app.command("status")
 def db_status() -> None:
-    """Show whether the local SQLite schema is ready."""
+    """Show whether the active database schema is ready."""
     settings, paths = _load_runtime()
-    del settings
-    missing_tables = missing_required_tables(paths.database_path)
-    typer.echo(render_db_status_report(paths, missing_tables))
-    if not paths.database_path.exists() or missing_tables:
+    runtime = resolve_database_runtime(paths.database_path, settings=settings)
+    try:
+        present = database_exists(paths.database_path, settings=settings)
+        missing_tables = missing_required_tables(paths.database_path)
+    except Exception as exc:
+        typer.echo(
+            "\n".join(
+                [
+                    "jobs_ai database status",
+                    f"database backend: {runtime.backend}",
+                    f"database target: {runtime.target_label}",
+                    "status: failed",
+                    f"error: {exc}",
+                ]
+            )
+        )
         raise typer.Exit(code=1)
+    typer.echo(
+        render_db_status_report(
+            paths,
+            missing_tables,
+            backend=runtime.backend,
+            target_label=runtime.target_label,
+            database_present=present,
+        )
+    )
+    if not present or missing_tables:
+        raise typer.Exit(code=1)
+
+
+@db_app.command("backend-status")
+def db_backend_status() -> None:
+    """Show the resolved database backend configuration and schema readiness."""
+    settings, paths = _load_runtime()
+    del paths
+    result = build_backend_status(settings)
+    typer.echo(render_db_backend_status_report(result))
+    if not result.reachable or result.missing_tables:
+        raise typer.Exit(code=1)
+
+
+@db_app.command("ping")
+def db_ping() -> None:
+    """Check connectivity to the active database backend."""
+    settings, paths = _load_runtime()
+    del paths
+    result = ping_database_target(settings)
+    typer.echo(render_db_ping_report(result))
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@db_app.command("migrate-to-postgres")
+def db_migrate_to_postgres(
+    source_sqlite: Path | None = typer.Option(
+        None,
+        "--source-sqlite",
+        help="Optional source SQLite path. Defaults to the resolved local canonical SQLite path.",
+    ),
+    database_url: str | None = typer.Option(
+        None,
+        "--database-url",
+        help="Optional Postgres/Neon connection string. Defaults to DATABASE_URL from the environment.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Run the SQLite-to-Postgres migration inside a rollback-only transaction.",
+    ),
+) -> None:
+    """Copy the canonical SQLite database on this machine into Neon/Postgres."""
+    settings, paths = _load_runtime()
+    ensure_workspace(paths)
+    source_path = paths.database_path if source_sqlite is None else source_sqlite.expanduser()
+    effective_database_url = settings.database_url if database_url is None else database_url
+    target_label = resolve_database_runtime(
+        source_path,
+        backend="postgres",
+        database_url=effective_database_url,
+    ).target_label
+    try:
+        result = migrate_sqlite_to_postgres(
+            source_path,
+            database_url=effective_database_url or "",
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        typer.echo(
+            render_db_migrate_to_postgres_error_report(
+                source_path,
+                target_label,
+                str(exc),
+            )
+        )
+        raise typer.Exit(code=1)
+    typer.echo(render_db_migrate_to_postgres_report(result))
+
+
+@db_app.command("merge")
+def db_merge(
+    source_db: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        help="SQLite database file to merge into the canonical target.",
+    ),
+    target: Path | None = typer.Option(
+        None,
+        "--target",
+        help="Optional target SQLite database path. Defaults to JOBS_AI_SQLITE_PATH or data/jobs_ai.db.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview the merge without modifying the target database.",
+    ),
+    backup: bool = typer.Option(
+        False,
+        "--backup",
+        help="Create a timestamped backup of the target database before merging.",
+    ),
+    vacuum: bool = typer.Option(
+        False,
+        "--vacuum",
+        help="Run VACUUM on the target database after a successful write merge.",
+    ),
+) -> None:
+    """Merge one SQLite database into the canonical target without blindly overwriting it."""
+    settings, default_paths = _load_runtime()
+    effective_database_path = settings.database_path if target is None else target
+    paths = build_workspace_paths(
+        effective_database_path,
+        project_root=default_paths.project_root,
+    )
+    ensure_workspace(paths)
+    try:
+        result = merge_sqlite_databases(
+            paths.database_path,
+            source_db,
+            dry_run=dry_run,
+            create_backup=backup,
+            vacuum=vacuum,
+        )
+    except (ValueError, RuntimeError, sqlite3.Error) as exc:
+        typer.echo(
+            render_db_merge_error_report(
+                paths.database_path,
+                source_db,
+                str(exc),
+            )
+        )
+        raise typer.Exit(code=1)
+    typer.echo(render_db_merge_report(paths, result))
 
 
 def run(argv: Sequence[str] | None = None) -> int:

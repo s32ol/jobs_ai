@@ -1,0 +1,94 @@
+Banner
+Highnote Logo
+Back to jobs
+Payment Analytics Engineer
+Remote
+About Highnote 
+
+Founded in 2020 by a team of leaders from Braintree, PayPal, and Lending Club, Highnote is an embedded finance company that sets the standard in modern card platform management. As an all-in-one card issuer processor and program management platform, we provide digital-first organizations with the flexibility to seamlessly issue and process payment cards, embed virtual and physical card payments, and integrate ledger and wallet functionalities—empowering businesses to drive growth and profitability.
+
+We’ve raised $145M+ and have grown our team to 140+ employees. Headquartered in San Francisco, we’ve managed to build one of the most advanced payments teams in the industry, with team members in 25+ US states. 
+
+Operating through our core values of customer obsession, executional excellence, intentional inclusion, we’re helping businesses grow for the future by creating the payment products demanded by tomorrow, with the ability to solve for use cases that don’t exist yet.
+
+We are fast-moving, hands-on, and strongly believe everyone deserves a seat at the table. We believe we’re unlocking incredible opportunities that can change the future of payments, as long as we have the right people to make it happen.
+Job Description
+
+As a Payment Analytics Engineer reporting to the Director of Business Intelligence, you will be a key technical partner for our Partner Operations team. Your mission is to ensure absolute data consistency across the entire payment lifecycle, protecting the company from unknown liabilities while optimizing revenue through deep interchange analysis and forecasting. While you will not be responsible for the raw ingestion of card network data, you must possess a deep understanding of the ingestion process to track and audit data as it moves through our platform. You will interpret complex card network file specifications and our internal processing logic to ensure correct reporting on every transaction.
+What you’ll be doing:
+
+    Network Reporting & Regulatory Compliance
+        Decipher & Map Specifications: Translate dense card network jargon into Highnote-specific event codes and logic.
+        Automate Periodic Reporting: Own the end-to-end automation of quarterly network reporting and validation, ensuring submissions meet strict compliance standards with evolving requirements.
+        Point-in-Time Integrity: Architect systems to maintain rigorous point-in-time snapshots, ensuring data quality over time.
+        Logic Lifecycle Management: Proactively track and incorporate quarterly network specification changes to prevent reporting gaps or inaccuracies.
+    Interchange Analysis & Revenue Attribution
+        Interchange Optimization: Analyze transaction-level data to identify revenue leakage or downgrades where transactions failed to qualify for optimal interchange rates.
+        Granular Attribution: Build models to attribute complex network assessment fees and interchange revenue and costs back to specific customers, bin ranges, and product types.
+        Fee Validation: Perform deep-dives into network invoices to ensure Highnote is receiving all eligible incentives and that customer billing accurately reflects network costs.
+    Strategic Modeling & Network Economics
+        Network Pricing Scenarios: Model the financial impact of bi-annual network fee updates and pricing changes, allowing the business to adjust strategies before changes go live.
+        Product vs. Cost Comparisons: Conduct deep-dive analyses comparing the financial impact of different interchange qualifications to quantify product development efforts.
+        Margin Impact Analysis: Evaluate how specific network rule changes affect overall margin and product profitability.
+    Data Engineering & Upstream Influence
+        Upstream Logic Migration: Partner with core Engineering to migrate complex financial logic from downstream dashboards into upstream denormalized tables and User Defined Functions (UDFs).
+        Dynamic Data Modeling: Design and optimize SQL/NoSQL structures that handle high-volume transactional data and automate bin-range table updates.
+
+What we are looking for:
+
+    Experience: 8+ years in data engineering, analytics, or reporting; with 5+ years of experience in Payments and Fintech.
+    Domain Expertise: Deep knowledge of payment domains, specifically card network file structures and specifications, fund movement, and interchange qualifications.
+    Technical Proficiency: Expertise in SQL and Python (or Java) for building data processing jobs and automating complex reporting workflows.
+    Data Modeling: Proven ability to model data structures that ensure scalability and performance in high-volume environments.
+    Attention to Detail: A zero error mindset with the ability to document and maintain workflows to support the reliability of reporting and analytics systems.
+    Financial Literacy: A background in Accounting or Finance, either through formal education or professional experience, to support complex financial data tracking.
+
+Bonus skills: 
+
+    Experience with cloud platforms such as GCP or AWS.
+    Knowledge of ETL/ELT pipelines and the transformation of raw data into business-ready formats.
+    Experience applying data visualization best practices to design impactful, actionable dashboards using tools like Tableau, Looker, Looker Studio, or something similar.
+
+Why Highnote?
+
+    We’re a startup that allows for our employees to truly build from the ground up and impact every layer of our organization. 
+    We’re a team of payments obsessed individuals. While some of us come from the fintech world, some of us don’t. We value the varied backgrounds and the diverse perspectives of our employees. 
+    We’re small on hierarchy and big on growth. We’re a flat organization that allows everyone to have direct exposure to our leadership team. We are looking for builders who thrive in ambiguity. 
+    We’re backed by Oak HC/FT, Costanoa Ventures, Adams Street Partners, Westcap, and Pinegrove Venture Partners. Angel Investors include Bill Ready (CEO at Pinterest) and Renaud Laplanche (Co-Founder & CEO of Upgrade).
+
+Highnote benefits
+
+    Flexible Paid Time Off
+    100% healthcare coverage + 75% coverage for dependents
+    401k program
+    Paid Parental Leave: Up to 16 weeks paid leave for the birth parent, and up to 6 weeks paid leave for the non-birth parent
+    Equity in Highnote
+    Stipend to build out your home office; internet reimbursement
+    At Highnote we have built a total rewards philosophy that includes fair, equitable, geo-based compensation that is performance and potential based. Our compensation packages are competitive based on robust market research and are a combination of a cash salary, equity, and benefits. In compliance with the Equal Pay for Equal Work Act, the annual salary range for applicants is $170,000-$220,000.
+
+Highnote is a diverse and inclusive company committed to growing a diverse and inclusive team. We invite people from all backgrounds and identities to apply. We do not discriminate based on gender identity or expression, sexual orientation, race, religion, age, national origin, citizenship, disability, pregnancy status, veteran status, or any other characteristics protected by US federal state or local laws, or the laws of the country or jurisdiction where you work. Additionally, we encourage everyone to share which pronouns you wish for us to use when addressing you (i.e.: she/her, he/him, they/them, etc).
+Apply for this job
+
+*
+
+indicates a required field
+First Name*
+Last Name*
+Email*
+Phone
+Country
+Phone
+Resume/CV*
+Attach
+Enter manually
+
+Accepted file types: pdf, doc, docx, txt, rtf
+Cover Letter
+Attach
+Enter manually
+
+Accepted file types: pdf, doc, docx, txt, rtf
+LinkedIn Profile
+Location (City, State):*
+
+Powered by

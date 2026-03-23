@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from contextlib import closing
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from typer.testing import CliRunner
 
@@ -22,6 +24,13 @@ from jobs_ai.cli import app
 from jobs_ai.db import connect_database, initialize_schema, insert_job
 
 RUNNER = CliRunner()
+
+
+def _sqlite_cli_env(database_path: Path) -> dict[str, str]:
+    return {
+        "JOBS_AI_DB_BACKEND": "sqlite",
+        "JOBS_AI_DB_PATH": str(database_path),
+    }
 
 
 def _job_record(
@@ -47,6 +56,7 @@ def _job_record(
     }
 
 
+@patch.dict("os.environ", {"JOBS_AI_DB_BACKEND": "sqlite"}, clear=False)
 class ApplicationTrackingTest(unittest.TestCase):
     def test_record_application_status_allows_manual_updates_and_records_timestamps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -135,7 +145,7 @@ class ApplicationTrackingTest(unittest.TestCase):
     def test_cli_track_mark_records_status_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
-            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            env = _sqlite_cli_env(database_path)
             initialize_schema(database_path)
 
             with closing(connect_database(database_path)) as connection:
@@ -161,7 +171,7 @@ class ApplicationTrackingTest(unittest.TestCase):
     def test_cli_track_mark_rejects_invalid_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
-            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            env = _sqlite_cli_env(database_path)
             initialize_schema(database_path)
 
             with closing(connect_database(database_path)) as connection:
@@ -186,7 +196,7 @@ class ApplicationTrackingTest(unittest.TestCase):
     def test_cli_track_mark_supports_new_outcome_statuses(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
-            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            env = _sqlite_cli_env(database_path)
             initialize_schema(database_path)
 
             with closing(connect_database(database_path)) as connection:
@@ -211,7 +221,7 @@ class ApplicationTrackingTest(unittest.TestCase):
     def test_cli_track_list_and_status_display_current_status_and_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
-            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            env = _sqlite_cli_env(database_path)
             initialize_schema(database_path)
 
             with closing(connect_database(database_path)) as connection:
@@ -261,6 +271,47 @@ class ApplicationTrackingTest(unittest.TestCase):
             self.assertIn("tracking entries: 2", status_result.stdout)
             self.assertRegex(status_result.stdout, r"- \d{4}-\d{2}-\d{2} .* \| opened")
             self.assertRegex(status_result.stdout, r"- \d{4}-\d{2}-\d{2} .* \| applied")
+
+    def test_cli_applied_matches_track_list_applied_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            env = _sqlite_cli_env(database_path)
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                first_job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Acme Data",
+                        title="Data Engineer",
+                        location="Remote",
+                        apply_url="https://example.com/jobs/1",
+                    ),
+                )
+                second_job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Bright Metrics",
+                        title="Analytics Engineer",
+                        location="Sacramento, CA",
+                        apply_url="https://example.com/jobs/2",
+                    ),
+                )
+                connection.commit()
+
+            record_application_status(database_path, job_id=first_job_id, status="applied")
+            record_application_status(database_path, job_id=second_job_id, status="opened")
+
+            applied_result = RUNNER.invoke(app, ["applied"], env=env)
+            filtered_result = RUNNER.invoke(app, ["track", "list", "--status", "applied"], env=env)
+
+            self.assertEqual(applied_result.exit_code, 0)
+            self.assertEqual(filtered_result.exit_code, 0)
+            self.assertEqual(applied_result.stdout, filtered_result.stdout)
+            self.assertIn("current status: applied", applied_result.stdout)
+            self.assertNotIn("current status: opened", applied_result.stdout)
 
 
 if __name__ == "__main__":

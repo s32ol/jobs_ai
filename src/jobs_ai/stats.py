@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .db import connect_database
+from .db_runtime import backend_name_for_connection
 
 _DEFAULT_TOP_COMPANIES_LIMIT = 5
 
@@ -22,6 +23,13 @@ SELECT
 FROM jobs
 WHERE datetime(created_at) >= datetime('now', ?)
 """
+_RECENT_IMPORTED_POSTGRES_SQL = """
+SELECT
+    COUNT(*) AS job_count,
+    COUNT(DISTINCT ingest_batch_id) AS batch_count
+FROM jobs
+WHERE created_at::timestamptz >= CURRENT_TIMESTAMP - (?::interval)
+"""
 _TRACKING_COUNTS_SQL = """
 SELECT COUNT(*) AS count
 FROM application_tracking
@@ -31,6 +39,11 @@ SELECT COUNT(*) AS count
 FROM application_tracking
 WHERE datetime(created_at) >= datetime('now', ?)
 """
+_RECENT_TRACKING_COUNTS_POSTGRES_SQL = """
+SELECT COUNT(*) AS count
+FROM application_tracking
+WHERE created_at::timestamptz >= CURRENT_TIMESTAMP - (?::interval)
+"""
 _SESSION_COUNTS_SQL = """
 SELECT COUNT(*) AS count
 FROM session_history
@@ -39,6 +52,11 @@ _RECENT_SESSION_COUNTS_SQL = """
 SELECT COUNT(*) AS count
 FROM session_history
 WHERE datetime(created_at) >= datetime('now', ?)
+"""
+_RECENT_SESSION_COUNTS_POSTGRES_SQL = """
+SELECT COUNT(*) AS count
+FROM session_history
+WHERE created_at::timestamptz >= CURRENT_TIMESTAMP - (?::interval)
 """
 _PORTAL_COUNTS_SQL = """
 SELECT COALESCE(portal_type, 'unknown') AS portal_type, COUNT(*) AS count
@@ -90,19 +108,34 @@ def gather_operator_stats(
 
     window = f"-{days} days"
     with closing(connect_database(database_path)) as connection:
+        recent_import_sql = (
+            _RECENT_IMPORTED_POSTGRES_SQL
+            if backend_name_for_connection(connection) == "postgres"
+            else _RECENT_IMPORTED_SQL
+        )
+        recent_tracking_sql = (
+            _RECENT_TRACKING_COUNTS_POSTGRES_SQL
+            if backend_name_for_connection(connection) == "postgres"
+            else _RECENT_TRACKING_COUNTS_SQL
+        )
+        recent_session_sql = (
+            _RECENT_SESSION_COUNTS_POSTGRES_SQL
+            if backend_name_for_connection(connection) == "postgres"
+            else _RECENT_SESSION_COUNTS_SQL
+        )
         total_jobs = int(connection.execute(_TOTAL_JOBS_SQL).fetchone()["count"])
         status_counts = tuple(
             StatsCount(label=str(row["status"]), count=int(row["count"]))
             for row in connection.execute(_JOB_STATUS_COUNTS_SQL).fetchall()
         )
-        recent_import_row = connection.execute(_RECENT_IMPORTED_SQL, (window,)).fetchone()
+        recent_import_row = connection.execute(recent_import_sql, (window,)).fetchone()
         total_tracking_events = int(connection.execute(_TRACKING_COUNTS_SQL).fetchone()["count"])
         recent_tracking_events = int(
-            connection.execute(_RECENT_TRACKING_COUNTS_SQL, (window,)).fetchone()["count"]
+            connection.execute(recent_tracking_sql, (window,)).fetchone()["count"]
         )
         total_sessions_started = int(connection.execute(_SESSION_COUNTS_SQL).fetchone()["count"])
         recent_sessions_started = int(
-            connection.execute(_RECENT_SESSION_COUNTS_SQL, (window,)).fetchone()["count"]
+            connection.execute(recent_session_sql, (window,)).fetchone()["count"]
         )
         portal_counts = tuple(
             StatsCount(label=str(row["portal_type"]), count=int(row["count"]))

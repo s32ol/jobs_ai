@@ -4,9 +4,9 @@ from collections import Counter
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-import sqlite3
 
 from .db import REQUIRED_TABLES, connect_database, initialize_schema
+from .db_runtime import database_exists, table_columns_from_connection, table_names_from_connection
 from .jobs.identity import build_job_identity, normalize_optional_metadata
 from .portal_support import detect_portal_type
 
@@ -67,7 +67,7 @@ def backfill_jobs_metadata(
     if limit is not None and limit < 1:
         raise ValueError("limit must be at least 1")
 
-    if dry_run and not database_path.exists():
+    if dry_run and not database_exists(database_path):
         return BackfillResult(
             dry_run=True,
             limit=limit,
@@ -83,7 +83,7 @@ def backfill_jobs_metadata(
         )
 
     pre_assessment = _empty_assessment()
-    if database_path.exists():
+    if database_exists(database_path):
         with closing(connect_database(database_path)) as connection:
             pre_assessment = _assess_backfill_candidates(connection)
     elif not dry_run:
@@ -161,13 +161,8 @@ def _empty_assessment() -> _BackfillAssessment:
     )
 
 
-def _assess_backfill_candidates(connection: sqlite3.Connection) -> _BackfillAssessment:
-    existing_tables = {
-        str(row["name"])
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        ).fetchall()
-    }
+def _assess_backfill_candidates(connection) -> _BackfillAssessment:
+    existing_tables = table_names_from_connection(connection)
     missing_tables = tuple(sorted(set(REQUIRED_TABLES) - existing_tables))
     if "jobs" not in existing_tables:
         return _BackfillAssessment(
@@ -177,10 +172,7 @@ def _assess_backfill_candidates(connection: sqlite3.Connection) -> _BackfillAsse
             candidates=(),
         )
 
-    available_columns = {
-        str(row["name"])
-        for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
-    }
+    available_columns = set(table_columns_from_connection(connection, "jobs"))
     missing_job_columns = tuple(
         column_name
         for column_name in (

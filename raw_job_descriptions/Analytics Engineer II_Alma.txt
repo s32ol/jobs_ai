@@ -1,0 +1,123 @@
+Banner
+Alma Logo
+Back to jobs
+Analytics Engineer II
+Remote, Contiguous US
+
+Alma is on a mission to simplify access to high-quality, affordable mental health care. We do this by making it easy and financially rewarding for therapists to accept insurance and offer in-network care. When a provider joins Alma, they gain access to a suite of tools that not only help them better run their business, but also grow it sustainably and develop as a provider. Alma is available in all 50 states, with over 20,000 therapists in our growing network. Anyone looking for a therapist can browse Alma’s free directory. Alma has raised $220.5M in funding from Insight Partners, Optum Ventures, Tusk Venture Partners, Primary Venture Partners, First Round Capital, Sound Ventures, BoxGroup, Cigna Ventures, and Rainfall Ventures. Alma was also named one of Inc’s Best Workplaces in 2022 and 2023.
+Website
+Job Board
+Values
+Candidate Interview Guide 
+ 
+---
+ 
+Analytics Engineer II
+
+Alma is seeking a mission-oriented Analytics Engineer to join our team. This person will work to build out and maintain Alma’s information systems that collect, manage and convert raw data standardized models for use by analysts and stakeholders across the company.  This person will play an integral role in making data accessible to the organization so it can evaluate and operate effectively and successfully.
+
+What you’ll do:
+
+    Build models and queries to transform data into standardized formats that power our business analytics.
+    Maintain and develop Alma’s data pipeline architecture
+    Proactively identify, diagnose, and resolve data quality, reliability, and performance issues across the data lifecycle.
+    Collaborate with stakeholders to define requirements and implement robust processes for ingesting data from diverse internal and external sources.
+    Implement data governance best practices and ensure compliance with data policies.
+    Work with the data team and cross-team stakeholders to evaluate the priorities and needs of the company.
+
+ 
+
+Who you are:
+
+    You have 3+ years of progressive experience in data engineering or analytics engineering, with a strong emphasis on building and optimizing data pipelines and data warehouses.
+    You possess advanced SQL skills, with proven experience in writing complex, performant queries and optimizing them in a data warehouse environment like Redshift.
+    You have a strong understanding of data warehousing and business intelligence tools.
+    Experience with dbt is highly desirable; familiarity with BI tools (e.g., Looker, Metabase) is a plus.
+    You enjoy exploring data sets and have technical expertise in data transformation and data modeling.
+    You have some experience with Python
+    You feel a passion for Alma's mission – to improve the experience of therapy for providers and their clients and simplify access to care.
+
+Tech Stack: Python, SQL, Redshift, dbt, Singer.io; (Familiarity with: Stitch, Lightdash, Metabase)
+
+Benefits:
+
+    We’re a remote-first company
+    Health insurance plans through Aetna (medical and dental) and MetLife (vision), including FSA and HSA plans
+    401K plan (ADP)
+    Lifestyle Spending Account for health, wellness, and family care
+    Monthly co-working space membership stipend
+    Monthly work-from-home stipend
+    Financial wellness benefits through Northstar
+    Pet discount program through United Pet Care
+    Financial perks and rewards through PerkSpot
+    EAP access through Aetna
+    One-time home office stipend to set up your home office
+    Inclusive family and medical leave plans
+    12 paid holidays and 1 Alma Give Back Day
+    Flexible PTO 
+
+Salary Band: $124,600- $160,000
+
+Alma’s compensation philosophy is driven by our company value of building equity. To best ensure pay equity, we typically bring in new hires near the middle of our listed salary bands and we do not negotiate our compensation (i.e. all people hired at the same level & role are brought in at the same salary, equity, and benefits). The recruiter you work with can provide more details on our philosophy.
+
+All Alma jobs are listed on our careers page. We do not use outside applications or automated text messaging in our recruiting process. We will not ask for any sensitive financial or identification information throughout the recruiting process. Any communication during the recruitment process, including interview requests or job offers, will come directly from a recruiting team member with a helloalma.com email address.
+
+Learn more about how Alma handles applicant data by reading Alma's Applicant Privacy Notice.
+
+Create a Job Alert
+
+Interested in building your career at Alma? Get future opportunities sent straight to your email.
+Create alert
+Apply for this job
+
+*
+
+indicates a required field
+First Name*
+Last Name*
+Email*
+Phone
+Country*
++1
+Phone*
+Resume/CV*
+
+2026_Morales_Robert_Resume-2.pdf
+Cover Letter
+Attach
+Enter manually
+
+Accepted file types: pdf, doc, docx, txt, rtf
+LinkedIn Profile*
+Website
+Will you now, or in the future, require sponsorship for employment visa status (e.g. H-1B visa status)?*
+No
+Why are you interested in this role at Alma? *
+To ensure compliance with Alma’s Employment of Relatives Policy, if one of your family members/relatives or someone you are living with currently works at Alma, please include their name(s) here (type N/A if not applicable): _______________.*
+Diversity, Equity and Inclusion at Alma
+
+At Alma, we work hard to bring together people from a vast set of backgrounds and identities. We aspire to champion diversity, amplify inclusive cultures and build equitably. 
+
+Submitting the below information is optional and your answers will not be attached to your applicant profile. All answers are compiled into an anonymous dataset and will only be seen from a macro point of view to help us inform our Diversity, Equity & Inclusion (DEI) strategy and efforts. This information will not be used as selection criteria nor will it be used as any basis in connection with any decisions regarding your candidacy.  We take our DEI efforts seriously, and we would greatly appreciate your participation. Of course, you are welcome to opt out of submitting this information and there will be no consequences for your decision not to share this information.
+
+Glossary of terms
+
+    Gender is personal (how we see ourselves), while sexual orientation is interpersonal (who we are physically, emotionally and/or romantically attracted to).
+    Race refers to the concept of dividing people into groups on the basis of various sets of physical characteristics and the process of ascribing social meaning to those groups. In this demographic survey, race is self-identified. Race differs from ethnicity in that commonalities such as national origin, tribal heritage, religion, language, and culture can describe someone’s ethnicity. People of any race may be of any ethnic origin. [1] [2] [3]
+    Nationality refers to the status of belonging to a particular nation, whether by birth or naturalization. It describes a legal relationship between an individual person and a political state. E.g.: American, Canadian. [1]
+    Two-Spirit is a modern pan-Native American umbrella term. Indigenous individuals may use the term Two-Spirit to reclaim traditions related to gender identity, gender expression, sexual orientation, spiritual identity, and/or traditional roles. [1] [2]
+
+Gender (mark all that apply)
+Man
+Sexual Orientation (mark all that apply)
+Gay
+Race (mark all that apply)
+White
+Are you of Hispanic, Latino/a/x, or of Spanish origin? (mark all that apply)
+Yes, of Hispanic, Latino/a/x, or Spanish origin
+Disability Status (mark all that apply)
+I do not identify with a disability or impairment
+Veteran Status
+I am not a protected veteran
+
+Powered by

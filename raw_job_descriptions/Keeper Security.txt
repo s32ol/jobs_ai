@@ -1,0 +1,276 @@
+Banner
+Keeper Security Logo
+Back to jobs
+Data Engineer, Analytics & Machine Learning Enablement
+Remote, US
+Description
+
+Keeper Security is hiring a Data Engineer to join our growing Data Engineering organization, with a focus on building analytics platforms and enabling machine-learning-driven insights across the business. This is a 100% remote position, with an opportunity to work a hybrid schedule for candidates based in the El Dorado Hills, CA or Chicago, IL metro areas.
+
+Keeper’s cybersecurity software is trusted by millions of people and thousands of organizations globally. Keeper is published in 23 languages and sold in over 150 countries. Join one of the fastest-growing cybersecurity companies and help design and build data pipelines and models that power analytics, operational reporting, and downstream machine learning use cases.
+
+About Keeper
+
+Keeper Security is transforming cybersecurity for organizations around the world with next-generation privileged access management. Keeper’s zero-trust and zero-knowledge cybersecurity solutions are FedRAMP and StateRAMP Authorized, FIPS 140-2 validated, as well as SOC 2 and ISO 27001 certified. Keeper deploys in minutes, not months, and seamlessly integrates with any tech stack to prevent breaches, reduce help desk costs and ensure compliance. Trusted by thousands of organizations to protect every user on every device, Keeper is the industry leader for best-in-class password management, secrets management, privileged access, secure remote access and encrypted messaging. Learn more at KeeperSecurity.com.
+
+About the Role
+
+As a Data Engineer, you will design and maintain analytics data pipelines and data models that support reporting, dashboards, and ML-adjacent workflows. You will work closely with data analysts, ML engineers, and business stakeholders to ensure data is reliable, well-modeled, and accessible. This role is ideal for a mid-level data engineer who is strong in analytics engineering and interested in supporting machine learning use cases without owning model development.
+
+Responsibilities
+
+Build and maintain ELT pipelines that ingest and transform data from operational systems
+Develop analytics-ready data models to support reporting, KPIs, and downstream ML use cases
+Collaborate with analysts and ML engineers to ensure data structures meet modeling and feature needs
+Implement data quality checks, validation, and testing to ensure accuracy and reliability
+Optimize data pipeline performance, scalability, and cost efficiency
+Support data preparation and feature engineering workflows for machine learning initiatives
+Document data models, transformations, and lineage to support reuse and data literacy
+Partner with security and platform teams to ensure data governance and privacy requirements are met
+Requirements
+
+3–5 years of experience in data engineering or backend data systems (SaaS experience preferred)
+Strong proficiency in SQL and experience designing analytics data models
+Working knowledge of Python for data processing or pipeline orchestration
+Experience working with cloud data warehouses such as Amazon Redshift (Snowflake or BigQuery acceptable)
+Familiarity with AWS data services such as S3, Glue, Lambda, or Step Functions
+Understanding of ELT best practices, data modeling, and schema design
+Exposure to supporting machine learning workflows through data preparation or feature engineering
+Knowledge of data security and privacy principles, including handling regulated data (PII, PHI)
+Strong software engineering fundamentals, including version control, testing, and CI/CD practices
+Bachelor’s degree in Computer Science, Engineering, Statistics, or a related field
+Due to FedRAMP requirements, candidates must be a U.S. Person
+Preferred Qualifications:
+
+Experience with DBT or analytics engineering frameworks
+Familiarity with feature stores or ML pipelines
+Experience supporting analytics or ML use cases for multiple business teams
+Interest in applied machine learning and data-driven products
+Benefits
+
+Medical, Dental & Vision (Inclusive of domestic partnerships)
+Employer Paid Life Insurance & Employee/Spouse/Child Supplemental life
+Voluntary Short/Long Term Disability Insurance
+401k (Roth/Traditional)
+A generous PTO plan that celebrates your commitment and seniority (including paid Bereavement/Jury Duty, etc)
+Above market annual bonuses
+Keeper Security, Inc. is an equal opportunity employer and participant in the U.S. Federal 
+
+E-Verify program. We celebrate diversity and are committed to creating an inclusive environment for all employees.
+
+Classification: Exempt
+
+ 
+
+Keeper Candidate Privacy Notice
+
+This notice explains how Keeper Security processes your personal data during recruitment. Depending on the role and location, the Controller of personal data (the organization responsible for determining why and how personal data is processed) will be Keeper Security Inc. (US), Keeper Security EMEA Ltd. (Ireland), or Keeper Security APAC K.K (Japan).
+
+1. Data We Collect
+
+Information You provide:
+
+Contact details, CV/resume, cover letter
+Employment history, qualifications, work eligibility
+Application responses and uploaded documents
+Information We generate:
+
+Interview notes, assessments, communications
+Scheduling information
+Information From Others:
+
+Recruiter/referral information who submit your profile
+References (with your consent, before final offer)
+Public professional profiles
+Background verification (post offer)
+Voluntary Diversity and Equal Opportunity Information
+
+We may ask you to voluntarily provide diversity information including race/ethnicity, gender, disability status and veteran status (US). Providing this information is optional and Keeper collects this data in order to comply with EEOC and similar requirements
+2. How We Use Your Data
+
+Assess your application and suitability
+Manage interviews and recruitment workflow
+Consider you for other/future roles (we may seek your consent to keep your information on our systems beyond the retention period specified)
+Comply with employment law obligations
+3. Legal Basis
+
+Legitimate Interests (recruitment management, security and integrity of the hiring process)
+Contracting steps (for progressed candidates)
+Legal and regulatory compliance obligations; explicit consent where required
+4. Who We Share Information With
+
+Internal:
+
+HR, hiring managers, interviewers*, IT support for system administration
+*Note - diversity and equal opportunity data is not shared with hiring managers.
+
+Third Parties:
+
+Service providers who assist with:
+
+Applicant tracking, recruitment systems and assessment providers
+Background verification vendors (post offer)
+Recruitment agencies (where applicable)
+Tools to support communication, collaboration and to securely store your data
+Keeper ensures that all our third parties are contractually bound to protect your personal data with adequate safeguards in place.
+
+5. International Transfers
+
+Your data may be accessed by Keeper entities globally as needed for the purposes of hiring and decision making. We protect any such data transfer between Keeper entities using appropriate safeguards under applicable data protection laws.
+
+6. Security
+
+We implement appropriate technical and organizational measures to protect your data, consistent with our industry leading security standards.
+
+7. Retention
+
+We keep your data for 24 months from your last application activity, then delete or anonymize it.
+
+Exceptions:
+
+You opt into our talent database for further retention by providing consent (extended retention)
+You're hired (transfers to employee records)
+8. Your Rights
+
+You have the following rights and can contact us at the email below to exercise them:
+
+Access, correct, or delete your data, subject to applicable law and retention requirements
+Object to or restrict processing
+Withdraw consent (where applicable)
+Request data portability
+Lodge a complaint with your data protection authority
+If you become an employee, your rights regarding your employee record are governed by our internal Employee Privacy Notice and certain data will be retained as required under relevant laws such as employment or tax law. 
+
+When you request access to your personal data, some information may be redacted if it includes the personal data of other individuals or information that we must protect in order to preserve their privacy rights.
+
+9. Automated Decisions
+
+Keeper does not make hiring decisions using solely automated processing.
+
+10. Contact - Candidates can send privacy questions to: privacy@keepersecurity.com
+
+ 
+
+Create a Job Alert
+
+Interested in building your career at Keeper Security? Get future opportunities sent straight to your email.
+
+Create alert
+Apply for this job
+*
+
+indicates a required field
+
+First Name*
+Last Name*
+Preferred First Name
+Email*
+Phone
+Country*
+
+Phone*
+Location (City)*
+Locate me
+Resume/CV*
+AttachNo file chosen
+Enter manually
+Accepted file types: pdf, doc, docx, txt, rtf
+
+Cover Letter
+AttachNo file chosen
+Enter manually
+Accepted file types: pdf, doc, docx, txt, rtf
+
+Education
+
+School
+Select...
+
+Degree
+Select...
+
+Add another
+Do you live in one of the following states? Arizona, Arkansas, California, Colorado, Delaware, Florida, Georgia, Illinois, Indiana, Idaho, Maryland, Massachusetts, Minnesota, Missouri, Nevada, North Carolina, Oklahoma, Oregon, South Carolina, South Dakota, Tennessee, Texas, Utah, Virginia, Washington State, West Virginia, Wisconsin*
+Select...
+
+In what city and state do you currently reside?*
+Are you authorized to work in the United States for any employer?*
+Select...
+
+Will you now or in the future require immigration sponsorship for employment authorization (e.g. H1-B or other employment-based immigration)? If yes, please list which sponsorship will be required.*
+Select...
+
+Do you have hands-on experience building analytics data pipelines or models using SQL and cloud data warehouses?*
+Select...
+
+Briefly describe a data pipeline or model you built that supported analytics or reporting and was later used by data scientists or ML engineers. What was your role in ensuring data quality and usability?*
+LinkedIn Profile*
+What are your compensation expectations for this role?*
+Voluntary Self-Identification
+For government reporting purposes, we ask candidates to respond to the below self-identification survey. Completion of the form is entirely voluntary. Whatever your decision, it will not be considered in the hiring process or thereafter. Any information that you do provide will be recorded and maintained in a confidential file.
+
+As set forth in Keeper Security’s Equal Employment Opportunity policy, we do not discriminate on the basis of any protected group status under any applicable law.
+
+Gender
+Select...
+
+Are you Hispanic/Latino?
+Select...
+
+Race & Ethnicity Definitions
+If you believe you belong to any of the categories of protected veterans listed below, please indicate by making the appropriate selection. As a government contractor subject to the Vietnam Era Veterans Readjustment Assistance Act (VEVRAA), we request this information in order to measure the effectiveness of the outreach and positive recruitment efforts we undertake pursuant to VEVRAA. Classification of protected categories is as follows:
+
+A "disabled veteran" is one of the following: a veteran of the U.S. military, ground, naval or air service who is entitled to compensation (or who but for the receipt of military retired pay would be entitled to compensation) under laws administered by the Secretary of Veterans Affairs; or a person who was discharged or released from active duty because of a service-connected disability.
+
+A "recently separated veteran" means any veteran during the three-year period beginning on the date of such veteran's discharge or release from active duty in the U.S. military, ground, naval, or air service.
+
+An "active duty wartime or campaign badge veteran" means a veteran who served on active duty in the U.S. military, ground, naval or air service during a war, or in a campaign or expedition for which a campaign badge has been authorized under the laws administered by the Department of Defense.
+
+An "Armed forces service medal veteran" means a veteran who, while serving on active duty in the U.S. military, ground, naval or air service, participated in a United States military operation for which an Armed Forces service medal was awarded pursuant to Executive Order 12985.
+
+Veteran Status
+Select...
+
+Voluntary Self-Identification of Disability
+Form CC-305
+Page 1 of 1
+OMB Control Number 1250-0005
+Expires 04/30/2026
+
+Why are you being asked to complete this form?
+We are a federal contractor or subcontractor. The law requires us to provide equal employment opportunity to qualified people with disabilities. We have a goal of having at least 7% of our workers as people with disabilities. The law says we must measure our progress towards this goal. To do this, we must ask applicants and employees if they have a disability or have ever had one. People can become disabled, so we need to ask this question at least every five years.
+
+Completing this form is voluntary, and we hope that you will choose to do so. Your answer is confidential. No one who makes hiring decisions will see it. Your decision to complete the form and your answer will not harm you in any way. If you want to learn more about the law or this form, visit the U.S. Department of Labor’s Office of Federal Contract Compliance Programs (OFCCP) website at www.dol.gov/ofccp.
+
+How do you know if you have a disability?
+A disability is a condition that substantially limits one or more of your “major life activities.” If you have or have ever had such a condition, you are a person with a disability. Disabilities include, but are not limited to:
+
+Alcohol or other substance use disorder (not currently using drugs illegally)
+Autoimmune disorder, for example, lupus, fibromyalgia, rheumatoid arthritis, HIV/AIDS
+Blind or low vision
+Cancer (past or present)
+Cardiovascular or heart disease
+Celiac disease
+Cerebral palsy
+Deaf or serious difficulty hearing
+Diabetes
+Disfigurement, for example, disfigurement caused by burns, wounds, accidents, or congenital disorders
+Epilepsy or other seizure disorder
+Gastrointestinal disorders, for example, Crohn's Disease, irritable bowel syndrome
+Intellectual or developmental disability
+Mental health conditions, for example, depression, bipolar disorder, anxiety disorder, schizophrenia, PTSD
+Missing limbs or partially missing limbs
+Mobility impairment, benefiting from the use of a wheelchair, scooter, walker, leg brace(s) and/or other supports
+Nervous system condition, for example, migraine headaches, Parkinson’s disease, multiple sclerosis (MS)
+Neurodivergence, for example, attention-deficit/hyperactivity disorder (ADHD), autism spectrum disorder, dyslexia, dyspraxia, other learning disabilities
+Partial or complete paralysis (any cause)
+Pulmonary or respiratory conditions, for example, tuberculosis, asthma, emphysema
+Short stature (dwarfism)
+Traumatic brain injury
+Disability Status
+Select...
+
+PUBLIC BURDEN STATEMENT: According to the Paperwork Reduction Act of 1995 no persons are required to respond to a collection of information unless such collection displays a valid OMB control number. This survey should take about 5 minutes to complete.
+
+Powered by
+

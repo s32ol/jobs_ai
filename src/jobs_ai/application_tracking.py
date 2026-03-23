@@ -55,7 +55,7 @@ _ALLOWED_STATUS_TRANSITIONS = {
     "skipped": frozenset({"opened", "applied"}),
 }
 
-LIST_APPLICATION_STATUSES_SQL = """
+LIST_APPLICATION_STATUSES_BASE_SQL = """
 SELECT
     jobs.id,
     jobs.company,
@@ -70,9 +70,13 @@ SELECT
         LIMIT 1
     ) AS latest_timestamp
 FROM jobs
-WHERE (? IS NULL OR jobs.status = ?)
-ORDER BY jobs.id
 """
+
+LIST_APPLICATION_STATUSES_SQL = f"{LIST_APPLICATION_STATUSES_BASE_SQL}\nORDER BY jobs.id"
+
+LIST_APPLICATION_STATUSES_FILTERED_SQL = (
+    f"{LIST_APPLICATION_STATUSES_BASE_SQL}\nWHERE jobs.status = ?\nORDER BY jobs.id"
+)
 
 GET_JOB_STATUS_SQL = """
 SELECT
@@ -244,10 +248,13 @@ def list_application_statuses(
 ) -> tuple[ApplicationStatusSnapshot, ...]:
     normalized_status = normalize_application_status(status) if status is not None else None
     with closing(connect_database(database_path)) as connection:
-        rows = connection.execute(
-            LIST_APPLICATION_STATUSES_SQL,
-            (normalized_status, normalized_status),
-        ).fetchall()
+        if normalized_status is None:
+            rows = connection.execute(LIST_APPLICATION_STATUSES_SQL).fetchall()
+        else:
+            rows = connection.execute(
+                LIST_APPLICATION_STATUSES_FILTERED_SQL,
+                (normalized_status,),
+            ).fetchall()
 
     return tuple(
         ApplicationStatusSnapshot(
