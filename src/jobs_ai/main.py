@@ -20,6 +20,9 @@ from .application_log import ApplicationLogResult
 from .application_prefill import ApplicationPrefillResult
 from .config import GEOGRAPHY_PRIORITY, SEARCH_PRIORITY, TARGET_ROLES, Settings
 from .db import REQUIRED_TABLES, SessionHistoryEntry
+from .db_merge import DatabaseMergeResult, DatabaseSchemaAssessment
+from .db_postgres import BackendStatusResult, DatabasePingResult, PostgresMigrationResult
+from .db_runtime import resolve_database_runtime
 from .launch_dry_run import LaunchDryRunStep
 from .launch_executor import (
     LaunchExecutionReport,
@@ -119,6 +122,27 @@ def _command_with_optional_limit(command: str, limit: int | None) -> str:
     return _cli_example(f"{command} --limit {limit}")
 
 
+def _database_target_label(settings: Settings, paths: WorkspacePaths) -> str:
+    return resolve_database_runtime(paths.database_path, settings=settings).target_label
+
+
+def _append_schema_assessment(
+    lines: list[str],
+    title: str,
+    assessment: DatabaseSchemaAssessment,
+) -> None:
+    if not assessment.missing_tables and not assessment.missing_job_columns:
+        return
+    lines.append(title)
+    if assessment.missing_tables:
+        lines.extend(f"- table: {table_name}" for table_name in assessment.missing_tables)
+    if assessment.missing_job_columns:
+        lines.extend(
+            f"- jobs column: {column_name}"
+            for column_name in assessment.missing_job_columns
+        )
+
+
 def run_apply_workflow(
     database_path: Path,
     *,
@@ -199,8 +223,10 @@ def render_status_report(settings: Settings, paths: WorkspacePaths) -> str:
             "jobs_ai control tower",
             f"environment: {settings.environment}",
             f"profile: {settings.profile}",
+            f"database backend: {settings.database_backend}",
+            f"database target: {_database_target_label(settings, paths)}",
             f"project root: {paths.project_root}",
-            f"database path: {paths.database_path}",
+            f"sqlite fallback path: {paths.database_path}",
             "",
             "current focus: milestone 11 operational polish",
             "",
@@ -262,10 +288,18 @@ def render_doctor_report(paths: WorkspacePaths, missing_paths: Sequence[Path]) -
     return "\n".join(lines)
 
 
-def render_db_init_report(paths: WorkspacePaths, created_paths: Sequence[Path]) -> str:
+def render_db_init_report(
+    paths: WorkspacePaths,
+    created_paths: Sequence[Path],
+    *,
+    backend: str = "sqlite",
+    target_label: str | None = None,
+) -> str:
     lines = [
         "jobs_ai database init",
-        f"database path: {paths.database_path}",
+        f"database backend: {backend}",
+        f"database target: {target_label or paths.database_path}",
+        f"sqlite fallback path: {paths.database_path}",
         "schema: ready",
     ]
     if created_paths:
@@ -286,11 +320,20 @@ def render_db_init_report(paths: WorkspacePaths, created_paths: Sequence[Path]) 
     return "\n".join(lines)
 
 
-def render_db_status_report(paths: WorkspacePaths, missing_tables: Sequence[str]) -> str:
+def render_db_status_report(
+    paths: WorkspacePaths,
+    missing_tables: Sequence[str],
+    *,
+    backend: str = "sqlite",
+    target_label: str | None = None,
+    database_present: bool = True,
+) -> str:
     lines = [
         "jobs_ai database status",
-        f"database path: {paths.database_path}",
-        f"database file: {'present' if paths.database_path.exists() else 'missing'}",
+        f"database backend: {backend}",
+        f"database target: {target_label or paths.database_path}",
+        f"sqlite fallback path: {paths.database_path}",
+        f"database presence: {'present' if database_present else 'missing'}",
     ]
     if missing_tables:
         lines.append("schema: missing")
@@ -303,6 +346,224 @@ def render_db_status_report(paths: WorkspacePaths, missing_tables: Sequence[str]
         lines.extend(f"- {table_name}" for table_name in REQUIRED_TABLES)
         _append_guidance(lines, "next:", (_cli_example("import data/raw/sample_job_leads.json"),))
     return "\n".join(lines)
+
+
+def render_db_backend_status_report(result: BackendStatusResult) -> str:
+    lines = [
+        "jobs_ai database backend status",
+        f"active backend: {result.backend}",
+        f"backend source: {result.backend_source}",
+        f"fallback triggered: {'yes' if result.fallback_triggered else 'no'}",
+        f"database target: {result.target_label}",
+        f"sqlite fallback path: {result.sqlite_path}",
+        f"DATABASE_URL configured: {'yes' if result.database_url_configured else 'no'}",
+        f"reachable: {'yes' if result.reachable else 'no'}",
+        f"status: {result.message}",
+    ]
+    if result.warning is not None:
+        lines.append(f"warning: {result.warning}")
+    if result.missing_tables:
+        lines.append("missing required tables:")
+        lines.extend(f"- {table_name}" for table_name in result.missing_tables)
+    else:
+        lines.append("required tables present:")
+        lines.extend(f"- {table_name}" for table_name in REQUIRED_TABLES)
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("db ping"),
+            _cli_example("db status"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_db_ping_report(result: DatabasePingResult) -> str:
+    lines = [
+        "jobs_ai database ping",
+        f"active backend: {result.backend}",
+        f"backend source: {result.backend_source}",
+        f"fallback triggered: {'yes' if result.fallback_triggered else 'no'}",
+        f"database target: {result.target_label}",
+        f"status: {'ok' if result.ok else 'failed'}",
+        f"message: {result.message}",
+    ]
+    if result.warning is not None:
+        lines.append(f"warning: {result.warning}")
+    if result.ok:
+        _append_guidance(lines, "next:", (_cli_example("db status"),))
+    return "\n".join(lines)
+
+
+def render_db_migrate_to_postgres_report(result: PostgresMigrationResult) -> str:
+    status = "no migration changes"
+    if any(
+        (
+            result.source_registry.inserted_count,
+            result.source_registry.updated_count,
+            result.jobs.inserted_count,
+            result.jobs.updated_count,
+            result.jobs.matched_count,
+            result.applications.inserted_count,
+            result.applications.updated_count,
+            result.application_tracking.inserted_count,
+            result.application_tracking.updated_count,
+            result.session_history.inserted_count,
+            result.session_history.updated_count,
+        )
+    ):
+        status = "success"
+
+    lines = [
+        "jobs_ai database migrate-to-postgres",
+        f"source SQLite path: {result.source_path}",
+        f"database target: {result.target_label}",
+        f"dry run: {'yes' if result.dry_run else 'no'}",
+        f"fast path used: {'yes' if result.fast_path_used else 'no'}",
+        f"source registry scanned: {result.source_registry.scanned_count}",
+        f"source registry inserted: {result.source_registry.inserted_count}",
+        f"source registry updated: {result.source_registry.updated_count}",
+        f"source registry remapped to existing: {result.source_registry.matched_count}",
+        f"source registry unchanged: {result.source_registry.unchanged_count}",
+        f"jobs scanned: {result.jobs.scanned_count}",
+        f"jobs inserted: {result.jobs.inserted_count}",
+        f"jobs updated: {result.jobs.updated_count}",
+        f"jobs matched to existing: {result.jobs.matched_count}",
+        f"jobs unchanged: {result.jobs.unchanged_count}",
+        f"applications scanned: {result.applications.scanned_count}",
+        f"applications inserted: {result.applications.inserted_count}",
+        f"applications updated: {result.applications.updated_count}",
+        f"applications remapped to migrated jobs: {result.applications.matched_count}",
+        f"applications unchanged: {result.applications.unchanged_count}",
+        f"application tracking scanned: {result.application_tracking.scanned_count}",
+        f"application tracking inserted: {result.application_tracking.inserted_count}",
+        f"application tracking updated: {result.application_tracking.updated_count}",
+        f"application tracking remapped to migrated jobs: {result.application_tracking.matched_count}",
+        f"application tracking unchanged: {result.application_tracking.unchanged_count}",
+        f"session history scanned: {result.session_history.scanned_count}",
+        f"session history inserted: {result.session_history.inserted_count}",
+        f"session history updated: {result.session_history.updated_count}",
+        f"session history unchanged: {result.session_history.unchanged_count}",
+        f"status: {status}",
+    ]
+    if result.source_missing_tables_before:
+        lines.append("source schema gaps before migration:")
+        lines.extend(f"- table: {table_name}" for table_name in result.source_missing_tables_before)
+    if result.source_missing_job_columns_before:
+        lines.append("source job column gaps before migration:")
+        lines.extend(
+            f"- jobs column: {column_name}"
+            for column_name in result.source_missing_job_columns_before
+        )
+    if result.target_missing_tables_before:
+        lines.append("target schema gaps before migration:")
+        lines.extend(f"- table: {table_name}" for table_name in result.target_missing_tables_before)
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("db ping"),
+            _cli_example("db backend-status"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_db_migrate_to_postgres_error_report(
+    source_path: Path,
+    target_label: str,
+    error: str,
+) -> str:
+    return "\n".join(
+        [
+            "jobs_ai database migrate-to-postgres",
+            f"source SQLite path: {source_path}",
+            f"database target: {target_label}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
+def render_db_merge_report(
+    paths: WorkspacePaths,
+    result: DatabaseMergeResult,
+) -> str:
+    status = "no merge changes"
+    if any(
+        (
+            result.source_registry.inserted_count,
+            result.source_registry.updated_count,
+            result.jobs.inserted_count,
+            result.jobs.matched_count,
+            result.jobs.updated_existing_count,
+            result.jobs.reconciled_status_count,
+            result.applications.inserted_count,
+            result.application_tracking.inserted_count,
+            result.session_history.inserted_count,
+        )
+    ):
+        status = "success"
+
+    lines = [
+        "jobs_ai database merge",
+        f"database path: {paths.database_path}",
+        f"source path: {result.source_path}",
+        f"dry run: {'yes' if result.dry_run else 'no'}",
+        f"target file before run: {'present' if not result.target_created else 'missing'}",
+        f"backup path: {result.backup_path if result.backup_path is not None else 'none'}",
+        f"vacuum: {'completed' if result.vacuumed else 'not requested'}",
+        f"source registry scanned: {result.source_registry.scanned_count}",
+        f"source registry created: {result.source_registry.inserted_count}",
+        f"source registry updated: {result.source_registry.updated_count}",
+        f"source registry unchanged: {result.source_registry.skipped_count}",
+        f"jobs scanned: {result.jobs.scanned_count}",
+        f"jobs inserted: {result.jobs.inserted_count}",
+        f"jobs matched to existing: {result.jobs.matched_count}",
+        f"jobs updated in target: {result.jobs.updated_existing_count}",
+        f"job statuses reconciled: {result.jobs.reconciled_status_count}",
+        f"applications scanned: {result.applications.scanned_count}",
+        f"applications inserted: {result.applications.inserted_count}",
+        f"applications skipped as duplicates: {result.applications.skipped_count}",
+        f"application tracking scanned: {result.application_tracking.scanned_count}",
+        f"application tracking inserted: {result.application_tracking.inserted_count}",
+        f"application tracking skipped as duplicates: {result.application_tracking.skipped_count}",
+        f"session history scanned: {result.session_history.scanned_count}",
+        f"session history appended: {result.session_history.inserted_count}",
+        f"session history skipped as duplicates: {result.session_history.skipped_count}",
+        f"status: {status}",
+    ]
+    if result.jobs.rule_counts:
+        lines.append("job match rules:")
+        lines.extend(f"- {entry.rule}: {entry.count}" for entry in result.jobs.rule_counts)
+    _append_schema_assessment(lines, "target schema gaps before merge:", result.target_schema_before)
+    _append_schema_assessment(lines, "source schema gaps before merge:", result.source_schema_before)
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("db status"),
+            _cli_example("stats"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_db_merge_error_report(
+    target_path: Path,
+    source_path: Path,
+    error: str,
+) -> str:
+    return "\n".join(
+        [
+            "jobs_ai database merge",
+            f"database path: {target_path}",
+            f"source path: {source_path}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
 
 
 def render_maintenance_backfill_report(
