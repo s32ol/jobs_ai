@@ -58,3 +58,9 @@ dist/
 /chatgpt_sources_bundle/
 /chatgpt_sources_bundle_pass2/
 private_notes/
+
+# macOS junk
+.DS_Store
+
+# audit backups
+*.audit.bak
