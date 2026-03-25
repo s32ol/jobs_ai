@@ -1,0 +1,73 @@
+{
+  "version": "resume-profile-v1",
+  "metadata": {
+    "documentTitle": "Minimal Resume Example",
+    "allowPageSpill": true
+  },
+  "header": {
+    "name": "Jamie Example",
+    "headline": "Data Engineer",
+    "contactItems": [
+      {
+        "type": "email",
+        "text": "jamie@example.com",
+        "url": ""
+      }
+    ]
+  },
+  "summary": {
+    "id": "summary",
+    "heading": "SUMMARY",
+    "order": 10,
+    "visible": true,
+    "renderHeading": false,
+    "paragraphs": [
+      "Data engineer focused on reliable reporting pipelines and compact stakeholder communication."
+    ]
+  },
+  "coreTechnologies": {
+    "id": "core-technologies",
+    "heading": "CORE TECHNOLOGIES",
+    "order": 20,
+    "visible": false,
+    "items": [],
+    "preferredLineCount": 2
+  },
+  "experienceSections": [
+    {
+      "id": "professional-experience",
+      "heading": "PROFESSIONAL EXPERIENCE",
+      "order": 30,
+      "visible": true,
+      "entries": [
+        {
+          "title": "Data Engineer",
+          "org": "Example Co",
+          "location": "Remote",
+          "date": "2023 - Present",
+          "subtitle": "",
+          "bullets": [
+            "Built reporting pipelines and validation checks for recurring business metrics."
+          ],
+          "links": []
+        }
+      ]
+    }
+  ],
+  "technicalProjects": {
+    "id": "technical-projects",
+    "heading": "TECHNICAL PROJECTS",
+    "order": 60,
+    "visible": false,
+    "entries": []
+  },
+  "education": {
+    "id": "education",
+    "heading": "EDUCATION",
+    "order": 70,
+    "visible": false,
+    "layoutVariant": "auto",
+    "entries": []
+  },
+  "customSections": []
+}

@@ -1,0 +1,145 @@
+{
+  "version": "resume-profile-v1",
+  "metadata": {
+    "documentTitle": "",
+    "allowPageSpill": true
+  },
+  "header": {
+    "name": "",
+    "headline": "",
+    "contactItems": [
+      {
+        "type": "location",
+        "text": "",
+        "url": ""
+      },
+      {
+        "type": "phone",
+        "text": "",
+        "url": ""
+      },
+      {
+        "type": "email",
+        "text": "",
+        "url": ""
+      },
+      {
+        "type": "link",
+        "text": "",
+        "url": ""
+      }
+    ]
+  },
+  "summary": {
+    "id": "summary",
+    "heading": "SUMMARY",
+    "order": 10,
+    "visible": true,
+    "renderHeading": false,
+    "paragraphs": [
+      ""
+    ]
+  },
+  "coreTechnologies": {
+    "id": "core-technologies",
+    "heading": "CORE TECHNOLOGIES",
+    "order": 20,
+    "visible": true,
+    "items": [
+      ""
+    ],
+    "preferredLineCount": 2
+  },
+  "experienceSections": [
+    {
+      "id": "professional-experience",
+      "heading": "PROFESSIONAL EXPERIENCE",
+      "order": 30,
+      "visible": true,
+      "entries": [
+        {
+          "title": "",
+          "org": "",
+          "location": "",
+          "date": "",
+          "subtitle": "",
+          "bullets": [
+            ""
+          ],
+          "links": [
+            {
+              "label": "",
+              "url": ""
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "technicalProjects": {
+    "id": "technical-projects",
+    "heading": "TECHNICAL PROJECTS",
+    "order": 60,
+    "visible": true,
+    "entries": [
+      {
+        "title": "",
+        "date": "",
+        "subtitle": "",
+        "summary": "",
+        "bullets": [
+          ""
+        ],
+        "links": [
+          {
+            "label": "",
+            "url": ""
+          }
+        ]
+      }
+    ]
+  },
+  "education": {
+    "id": "education",
+    "heading": "EDUCATION",
+    "order": 70,
+    "visible": true,
+    "layoutVariant": "auto",
+    "entries": [
+      {
+        "institution": "",
+        "credential": "",
+        "location": "",
+        "date": "",
+        "details": "",
+        "links": [
+          {
+            "label": "",
+            "url": ""
+          }
+        ]
+      }
+    ]
+  },
+  "customSections": [
+    {
+      "id": "custom-section",
+      "heading": "CUSTOM SECTION",
+      "order": 80,
+      "visible": false,
+      "sectionKind": "paragraphs",
+      "preferredLineCount": 2,
+      "layoutVariant": "auto",
+      "items": [
+        ""
+      ],
+      "bullets": [
+        ""
+      ],
+      "paragraphs": [
+        ""
+      ],
+      "entries": []
+    }
+  ]
+}

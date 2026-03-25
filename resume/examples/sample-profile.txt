@@ -1,0 +1,119 @@
+# Canonical TXT contract for the universal resume template system.
+# JSON is canonical. TXT is the strict fallback format.
+# Keep the block labels and field labels exactly as shown.
+# Delete any optional block you do not need. Hidden or empty sections are omitted.
+# [EXPERIENCE_SECTION] and [CUSTOM_SECTION] blocks may be repeated as needed.
+# CONTACT and LINK use pipe-delimited values.
+# The pipe character "|" is forbidden inside TXT field values, including headlines and URLs.
+# BULLET values must be plain sentences without bullet symbols or numbering.
+# Use --- to separate multiple entries in entry-based blocks.
+[METADATA]
+DOCUMENT_TITLE: Alex Rivera Resume
+ALLOW_PAGE_SPILL: true
+
+[HEADER]
+NAME: Alex Rivera
+HEADLINE: Data Engineer, Analytics Infrastructure, Python, SQL
+CONTACT: location | Seattle, WA
+CONTACT: phone | 555-0100
+CONTACT: email | alex.rivera@example.com
+CONTACT: link | github.com/alrivera | https://github.com/alrivera
+CONTACT: link | linkedin.com/in/alrivera | https://linkedin.com/in/alrivera
+
+[SUMMARY]
+ID: summary
+HEADING: SUMMARY
+ORDER: 10
+VISIBLE: true
+RENDER_HEADING: false
+PARAGRAPH: Data engineer focused on building reliable analytics pipelines, reusable data models, and monitoring workflows that help product and operations teams make faster decisions.
+PARAGRAPH: Experienced translating noisy operational signals into clean reporting datasets, compact dashboards, and automation tools that reduce manual coordination work.
+
+[CORE_TECHNOLOGIES]
+ID: core-technologies
+HEADING: CORE TECHNOLOGIES
+ORDER: 20
+VISIBLE: true
+PREFERRED_LINE_COUNT: 2
+ITEM: Python
+ITEM: SQL
+ITEM: BigQuery
+ITEM: dbt
+ITEM: Airflow
+ITEM: Looker
+ITEM: Data Modeling
+ITEM: Workflow Automation
+ITEM: Incident Analysis
+ITEM: Git
+
+[EXPERIENCE_SECTION]
+ID: professional-experience
+HEADING: PROFESSIONAL EXPERIENCE
+ORDER: 30
+VISIBLE: true
+TITLE: Senior Data Engineer
+ORG: Northwind Health
+LOCATION: Remote
+DATE: 2022 - Present
+SUBTITLE: Analytics Platform
+BULLET: Built reusable ingestion and transformation jobs that consolidated product telemetry, support events, and release metadata into shared analytics tables.
+BULLET: Published validation checks and downstream monitoring so partner teams could trust daily reporting without manual reconciliations.
+BULLET: Designed stakeholder-facing dashboards that surfaced adoption, incident volume, and operational risk trends for product and operations leads.
+---
+TITLE: Analytics Engineer
+ORG: Cedar Systems
+LOCATION: Austin, TX
+DATE: 2020 - 2022
+SUBTITLE: Data Products
+BULLET: Modeled application and workflow data into consistent reporting schemas that reduced ad hoc spreadsheet analysis.
+BULLET: Automated recurring metric refreshes and alerting so analysts could spend more time on investigations and less on data preparation.
+BULLET: Partnered with engineering and customer success teams to define stable business logic for support, usage, and reliability metrics.
+
+[EXPERIENCE_SECTION]
+ID: additional-experience
+HEADING: ADDITIONAL EXPERIENCE
+ORDER: 40
+VISIBLE: true
+TITLE: Data Systems Associate
+ORG: Harbor Metrics
+LOCATION: Portland, OR
+DATE: 2018 - 2020
+SUBTITLE:
+BULLET: Standardized recurring operational datasets and reporting definitions that reduced manual spreadsheet cleanup for partner teams.
+
+[EXPERIENCE_SECTION]
+ID: programs-fellowships
+HEADING: PROGRAMS & FELLOWSHIPS
+ORDER: 50
+VISIBLE: true
+TITLE: Data Engineering Fellow
+ORG: Applied Data Collective
+LOCATION: Remote
+DATE: 2019
+SUBTITLE: Cohort Program
+BULLET: Built end-to-end sample pipelines and documented tradeoffs across ingestion, warehousing, validation, and dashboard delivery.
+
+[TECHNICAL_PROJECTS]
+ID: technical-projects
+HEADING: TECHNICAL PROJECTS
+ORDER: 60
+VISIBLE: true
+TITLE: Pulseboard
+DATE: 2024
+SUBTITLE: Open-source telemetry dashboard starter
+SUMMARY: Reusable monitoring starter built for small product teams that need compact reporting and lightweight alerting.
+BULLET: Included sample ingestion jobs, issue rollups, and templated warehouse models for feature and incident reporting.
+BULLET: Added dashboard views and alert thresholds so teams could spot adoption changes and workflow regressions quickly.
+LINK: Pulseboard | https://github.com/alrivera/pulseboard
+
+[EDUCATION]
+ID: education
+HEADING: EDUCATION
+ORDER: 70
+VISIBLE: true
+LAYOUT_VARIANT: auto
+INSTITUTION: University of Washington
+CREDENTIAL: B.S. Informatics
+LOCATION: Seattle, WA
+DATE: 2016 - 2020
+DETAILS: Data systems emphasis

@@ -1,0 +1,184 @@
+{
+  "version": "resume-profile-v1",
+  "metadata": {
+    "documentTitle": "Alex Rivera Resume",
+    "allowPageSpill": true
+  },
+  "header": {
+    "name": "Alex Rivera",
+    "headline": "Data Engineer, Analytics Infrastructure, Python, SQL",
+    "contactItems": [
+      {
+        "type": "location",
+        "text": "Seattle, WA",
+        "url": ""
+      },
+      {
+        "type": "phone",
+        "text": "555-0100",
+        "url": ""
+      },
+      {
+        "type": "email",
+        "text": "alex.rivera@example.com",
+        "url": ""
+      },
+      {
+        "type": "link",
+        "text": "github.com/alrivera",
+        "url": "https://github.com/alrivera"
+      },
+      {
+        "type": "link",
+        "text": "linkedin.com/in/alrivera",
+        "url": "https://linkedin.com/in/alrivera"
+      }
+    ]
+  },
+  "summary": {
+    "id": "summary",
+    "heading": "SUMMARY",
+    "order": 10,
+    "visible": true,
+    "renderHeading": false,
+    "paragraphs": [
+      "Data engineer focused on building reliable analytics pipelines, reusable data models, and monitoring workflows that help product and operations teams make faster decisions.",
+      "Experienced translating noisy operational signals into clean reporting datasets, compact dashboards, and automation tools that reduce manual coordination work."
+    ]
+  },
+  "coreTechnologies": {
+    "id": "core-technologies",
+    "heading": "CORE TECHNOLOGIES",
+    "order": 20,
+    "visible": true,
+    "items": [
+      "Python",
+      "SQL",
+      "BigQuery",
+      "dbt",
+      "Airflow",
+      "Looker",
+      "Data Modeling",
+      "Workflow Automation",
+      "Incident Analysis",
+      "Git"
+    ],
+    "preferredLineCount": 2
+  },
+  "experienceSections": [
+    {
+      "id": "professional-experience",
+      "heading": "PROFESSIONAL EXPERIENCE",
+      "order": 30,
+      "visible": true,
+      "entries": [
+        {
+          "title": "Senior Data Engineer",
+          "org": "Northwind Health",
+          "location": "Remote",
+          "date": "2022 - Present",
+          "subtitle": "Analytics Platform",
+          "bullets": [
+            "Built reusable ingestion and transformation jobs that consolidated product telemetry, support events, and release metadata into shared analytics tables.",
+            "Published validation checks and downstream monitoring so partner teams could trust daily reporting without manual reconciliations.",
+            "Designed stakeholder-facing dashboards that surfaced adoption, incident volume, and operational risk trends for product and operations leads."
+          ],
+          "links": []
+        },
+        {
+          "title": "Analytics Engineer",
+          "org": "Cedar Systems",
+          "location": "Austin, TX",
+          "date": "2020 - 2022",
+          "subtitle": "Data Products",
+          "bullets": [
+            "Modeled application and workflow data into consistent reporting schemas that reduced ad hoc spreadsheet analysis.",
+            "Automated recurring metric refreshes and alerting so analysts could spend more time on investigations and less on data preparation.",
+            "Partnered with engineering and customer success teams to define stable business logic for support, usage, and reliability metrics."
+          ],
+          "links": []
+        }
+      ]
+    },
+    {
+      "id": "additional-experience",
+      "heading": "ADDITIONAL EXPERIENCE",
+      "order": 40,
+      "visible": true,
+      "entries": [
+        {
+          "title": "Data Systems Associate",
+          "org": "Harbor Metrics",
+          "location": "Portland, OR",
+          "date": "2018 - 2020",
+          "subtitle": "",
+          "bullets": [
+            "Standardized recurring operational datasets and reporting definitions that reduced manual spreadsheet cleanup for partner teams."
+          ],
+          "links": []
+        }
+      ]
+    },
+    {
+      "id": "programs-fellowships",
+      "heading": "PROGRAMS & FELLOWSHIPS",
+      "order": 50,
+      "visible": true,
+      "entries": [
+        {
+          "title": "Data Engineering Fellow",
+          "org": "Applied Data Collective",
+          "location": "Remote",
+          "date": "2019",
+          "subtitle": "Cohort Program",
+          "bullets": [
+            "Built end-to-end sample pipelines and documented tradeoffs across ingestion, warehousing, validation, and dashboard delivery."
+          ],
+          "links": []
+        }
+      ]
+    }
+  ],
+  "technicalProjects": {
+    "id": "technical-projects",
+    "heading": "TECHNICAL PROJECTS",
+    "order": 60,
+    "visible": true,
+    "entries": [
+      {
+        "title": "Pulseboard",
+        "date": "2024",
+        "subtitle": "Open-source telemetry dashboard starter",
+        "summary": "Reusable monitoring starter built for small product teams that need compact reporting and lightweight alerting.",
+        "bullets": [
+          "Included sample ingestion jobs, issue rollups, and templated warehouse models for feature and incident reporting.",
+          "Added dashboard views and alert thresholds so teams could spot adoption changes and workflow regressions quickly."
+        ],
+        "links": [
+          {
+            "label": "Pulseboard",
+            "url": "https://github.com/alrivera/pulseboard"
+          }
+        ]
+      }
+    ]
+  },
+  "education": {
+    "id": "education",
+    "heading": "EDUCATION",
+    "order": 70,
+    "visible": true,
+    "layoutVariant": "auto",
+    "entries": [
+      {
+        "institution": "University of Washington",
+        "credential": "B.S. Informatics",
+        "location": "Seattle, WA",
+        "date": "2016 - 2020",
+        "details": "Data systems emphasis",
+        "links": []
+      }
+    ]
+  },
+  "customSections": []
+}
