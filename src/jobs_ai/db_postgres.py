@@ -8,15 +8,18 @@ import sqlite3
 import tempfile
 
 from .config import Settings
-from .db import REQUIRED_TABLES, find_duplicate_job_match, initialize_schema_connection, missing_required_tables
+from .db import REQUIRED_TABLES, find_duplicate_job_match, initialize_schema_connection
 from .db_runtime import (
+    POSTGRES_SQLITE_RUNTIME_FALLBACK_WARNING,
     backend_name_for_connection,
     connect_database,
     connect_sqlite_database,
-    database_exists,
+    fallback_reason_for_connection,
+    fallback_triggered_for_connection,
     resolve_database_runtime,
     table_columns_from_connection,
     table_names_from_connection,
+    target_label_for_connection,
 )
 from .jobs.identity import build_job_identity, normalize_optional_metadata
 
@@ -123,12 +126,14 @@ class BackendStatusResult:
     backend: str
     backend_source: str
     fallback_triggered: bool
+    fallback_reason: str | None
     warning: str | None
     target_label: str
     sqlite_path: Path
     database_url_configured: bool
     reachable: bool
     missing_tables: tuple[str, ...]
+    table_counts: tuple[tuple[str, int], ...]
     message: str
 
 
@@ -137,6 +142,7 @@ class DatabasePingResult:
     backend: str
     backend_source: str
     fallback_triggered: bool
+    fallback_reason: str | None
     warning: str | None
     target_label: str
     ok: bool
@@ -170,63 +176,128 @@ class PostgresMigrationResult:
 
 def build_backend_status(settings: Settings) -> BackendStatusResult:
     runtime = resolve_database_runtime(settings.database_path, settings=settings)
+    backend = runtime.backend
+    target_label = runtime.target_label
+    fallback_triggered, warning, fallback_reason = _resolve_fallback_details(settings)
     try:
-        reachable = database_exists(settings.database_path, settings=settings)
-        missing_tables = tuple(missing_required_tables(settings.database_path))
-        if reachable and not missing_tables:
+        with closing(connect_database(settings.database_path, settings=settings)) as connection:
+            backend = backend_name_for_connection(connection)
+            target_label = target_label_for_connection(connection, runtime=runtime)
+            fallback_triggered, warning, fallback_reason = _resolve_fallback_details(
+                settings,
+                connection=connection,
+            )
+            missing_tables = _missing_required_tables_for_connection(connection)
+            table_counts = _collect_required_table_counts_for_connection(
+                connection,
+                missing_tables=missing_tables,
+            )
+        reachable = True
+        if not missing_tables:
             message = "schema ready"
-        elif reachable:
-            message = "connected, schema incomplete"
         else:
-            message = "database unavailable"
+            message = "connected, schema incomplete"
     except Exception as exc:
         reachable = False
         missing_tables = tuple(REQUIRED_TABLES)
+        table_counts = ()
         message = str(exc)
 
     return BackendStatusResult(
-        backend=runtime.backend,
+        backend=backend,
         backend_source=settings.database_backend_source,
-        fallback_triggered=settings.database_fallback_triggered,
-        warning=settings.database_warning,
-        target_label=runtime.target_label,
+        fallback_triggered=fallback_triggered,
+        fallback_reason=fallback_reason,
+        warning=warning,
+        target_label=target_label,
         sqlite_path=runtime.sqlite_path,
         database_url_configured=runtime.database_url is not None,
         reachable=reachable,
         missing_tables=missing_tables,
+        table_counts=table_counts,
         message=message,
     )
 
 
 def ping_database_target(settings: Settings) -> DatabasePingResult:
     runtime = resolve_database_runtime(settings.database_path, settings=settings)
+    backend = runtime.backend
+    target_label = runtime.target_label
+    fallback_triggered, warning, fallback_reason = _resolve_fallback_details(settings)
     try:
         with closing(connect_database(settings.database_path, settings=settings)) as connection:
-            if backend_name_for_connection(connection) == "postgres":
+            backend = backend_name_for_connection(connection)
+            target_label = target_label_for_connection(connection, runtime=runtime)
+            fallback_triggered, warning, fallback_reason = _resolve_fallback_details(
+                settings,
+                connection=connection,
+            )
+            if backend == "postgres":
                 row = connection.execute("SELECT version() AS version").fetchone()
                 message = str(row["version"]).split(",", 1)[0]
             else:
                 row = connection.execute("SELECT sqlite_version() AS version").fetchone()
                 message = f"SQLite {row['version']}"
         return DatabasePingResult(
-            backend=runtime.backend,
+            backend=backend,
             backend_source=settings.database_backend_source,
-            fallback_triggered=settings.database_fallback_triggered,
-            warning=settings.database_warning,
-            target_label=runtime.target_label,
+            fallback_triggered=fallback_triggered,
+            fallback_reason=fallback_reason,
+            warning=warning,
+            target_label=target_label,
             ok=True,
             message=message,
         )
     except Exception as exc:
         return DatabasePingResult(
-            backend=runtime.backend,
+            backend=backend,
             backend_source=settings.database_backend_source,
-            fallback_triggered=settings.database_fallback_triggered,
-            warning=settings.database_warning,
-            target_label=runtime.target_label,
+            fallback_triggered=fallback_triggered,
+            fallback_reason=fallback_reason,
+            warning=warning,
+            target_label=target_label,
             ok=False,
             message=str(exc),
         )
+
+
+def _resolve_fallback_details(
+    settings: Settings,
+    *,
+    connection=None,
+) -> tuple[bool, str | None, str | None]:
+    fallback_triggered = settings.database_fallback_triggered
+    warning = settings.database_warning
+    fallback_reason = warning if fallback_triggered else None
+    if connection is not None and fallback_triggered_for_connection(connection):
+        fallback_triggered = True
+        warning = POSTGRES_SQLITE_RUNTIME_FALLBACK_WARNING
+        fallback_reason = fallback_reason_for_connection(connection) or warning
+    return fallback_triggered, warning, fallback_reason
+
+
+def _missing_required_tables_for_connection(connection) -> tuple[str, ...]:
+    return tuple(sorted(set(REQUIRED_TABLES) - table_names_from_connection(connection)))
+
+
+def _collect_required_table_counts_for_connection(
+    connection,
+    *,
+    missing_tables: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    if missing_tables:
+        return ()
+    return tuple(
+        (
+            table_name,
+            int(
+                connection.execute(
+                    f"SELECT COUNT(*) AS count FROM {table_name}"
+                ).fetchone()["count"]
+            ),
+        )
+        for table_name in REQUIRED_TABLES
+    )
 
 
 def migrate_sqlite_to_postgres(

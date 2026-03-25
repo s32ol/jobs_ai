@@ -325,17 +325,35 @@ def render_db_status_report(
     missing_tables: Sequence[str],
     *,
     backend: str = "sqlite",
+    backend_source: str | None = None,
     target_label: str | None = None,
     database_present: bool = True,
+    fallback_triggered: bool = False,
+    fallback_reason: str | None = None,
+    status_message: str | None = None,
+    table_counts: Sequence[tuple[str, int]] = (),
 ) -> str:
     lines = [
         "jobs_ai database status",
-        f"database backend: {backend}",
+        f"active backend: {backend}",
+        (
+            f"backend source: {backend_source}"
+            if backend_source is not None
+            else "backend source: n/a"
+        ),
+        f"fallback triggered: {'yes' if fallback_triggered else 'no'}",
+        (
+            f"fallback reason: {fallback_reason}"
+            if fallback_reason is not None
+            else "fallback reason: n/a"
+        ),
         f"database target: {target_label or paths.database_path}",
         f"sqlite fallback path: {paths.database_path}",
         f"database presence: {'present' if database_present else 'missing'}",
     ]
     if missing_tables:
+        if status_message is not None:
+            lines.append(f"status: {status_message}")
         lines.append("schema: missing")
         lines.append("missing required tables:")
         lines.extend(f"- {table_name}" for table_name in missing_tables)
@@ -344,6 +362,9 @@ def render_db_status_report(
         lines.append("schema: ready")
         lines.append("required tables present:")
         lines.extend(f"- {table_name}" for table_name in REQUIRED_TABLES)
+        if table_counts:
+            lines.append("table row counts:")
+            lines.extend(f"- {table_name}: {count}" for table_name, count in table_counts)
         _append_guidance(lines, "next:", (_cli_example("import data/raw/sample_job_leads.json"),))
     return "\n".join(lines)
 
@@ -354,13 +375,18 @@ def render_db_backend_status_report(result: BackendStatusResult) -> str:
         f"active backend: {result.backend}",
         f"backend source: {result.backend_source}",
         f"fallback triggered: {'yes' if result.fallback_triggered else 'no'}",
+        (
+            f"fallback reason: {result.fallback_reason}"
+            if result.fallback_reason is not None
+            else "fallback reason: n/a"
+        ),
         f"database target: {result.target_label}",
         f"sqlite fallback path: {result.sqlite_path}",
         f"DATABASE_URL configured: {'yes' if result.database_url_configured else 'no'}",
         f"reachable: {'yes' if result.reachable else 'no'}",
         f"status: {result.message}",
     ]
-    if result.warning is not None:
+    if result.warning is not None and result.warning != result.fallback_reason:
         lines.append(f"warning: {result.warning}")
     if result.missing_tables:
         lines.append("missing required tables:")
@@ -368,6 +394,12 @@ def render_db_backend_status_report(result: BackendStatusResult) -> str:
     else:
         lines.append("required tables present:")
         lines.extend(f"- {table_name}" for table_name in REQUIRED_TABLES)
+        if result.table_counts:
+            lines.append("table row counts:")
+            lines.extend(
+                f"- {table_name}: {count}"
+                for table_name, count in result.table_counts
+            )
     _append_guidance(
         lines,
         "next:",
@@ -385,11 +417,16 @@ def render_db_ping_report(result: DatabasePingResult) -> str:
         f"active backend: {result.backend}",
         f"backend source: {result.backend_source}",
         f"fallback triggered: {'yes' if result.fallback_triggered else 'no'}",
+        (
+            f"fallback reason: {result.fallback_reason}"
+            if result.fallback_reason is not None
+            else "fallback reason: n/a"
+        ),
         f"database target: {result.target_label}",
         f"status: {'ok' if result.ok else 'failed'}",
         f"message: {result.message}",
     ]
-    if result.warning is not None:
+    if result.warning is not None and result.warning != result.fallback_reason:
         lines.append(f"warning: {result.warning}")
     if result.ok:
         _append_guidance(lines, "next:", (_cli_example("db status"),))

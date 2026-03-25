@@ -26,10 +26,10 @@ from .application_tracking import (
     record_application_status,
 )
 from .config import load_settings
-from .db import initialize_schema, missing_required_tables
+from .db import initialize_schema
 from .db_merge import merge_sqlite_databases
 from .db_postgres import build_backend_status, migrate_sqlite_to_postgres, ping_database_target
-from .db_runtime import database_exists, resolve_database_runtime
+from .db_runtime import resolve_database_runtime
 from .maintenance import backfill_jobs_metadata
 from .jobs.importer import JobImportResult, import_jobs_from_file
 from .jobs.fast_apply import (
@@ -2521,33 +2521,22 @@ def db_init() -> None:
 def db_status() -> None:
     """Show whether the active database schema is ready."""
     settings, paths = _load_runtime()
-    runtime = resolve_database_runtime(paths.database_path, settings=settings)
-    try:
-        present = database_exists(paths.database_path, settings=settings)
-        missing_tables = missing_required_tables(paths.database_path)
-    except Exception as exc:
-        typer.echo(
-            "\n".join(
-                [
-                    "jobs_ai database status",
-                    f"database backend: {runtime.backend}",
-                    f"database target: {runtime.target_label}",
-                    "status: failed",
-                    f"error: {exc}",
-                ]
-            )
-        )
-        raise typer.Exit(code=1)
+    result = build_backend_status(settings)
     typer.echo(
         render_db_status_report(
             paths,
-            missing_tables,
-            backend=runtime.backend,
-            target_label=runtime.target_label,
-            database_present=present,
+            result.missing_tables,
+            backend=result.backend,
+            backend_source=result.backend_source,
+            target_label=result.target_label,
+            database_present=result.reachable,
+            fallback_triggered=result.fallback_triggered,
+            fallback_reason=result.fallback_reason,
+            status_message=result.message,
+            table_counts=result.table_counts,
         )
     )
-    if not present or missing_tables:
+    if not result.reachable or result.missing_tables:
         raise typer.Exit(code=1)
 
 

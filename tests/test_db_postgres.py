@@ -16,12 +16,25 @@ from jobs_ai.db import initialize_schema, initialize_schema_connection
 from jobs_ai.db_postgres import (
     BackendStatusResult,
     DatabasePingResult,
+    build_backend_status,
     _sync_identity_sequences,
     is_empty_postgres_target,
     migrate_sqlite_to_postgres,
 )
-from jobs_ai.db_runtime import connect_sqlite_database
-from jobs_ai.main import render_db_backend_status_report, render_db_ping_report
+from jobs_ai.db_runtime import (
+    POSTGRES_SQLITE_RUNTIME_FALLBACK_WARNING,
+    backend_name_for_connection,
+    connect_database,
+    connect_sqlite_database,
+    fallback_reason_for_connection,
+    fallback_triggered_for_connection,
+)
+from jobs_ai.main import (
+    render_db_backend_status_report,
+    render_db_ping_report,
+    render_db_status_report,
+)
+from jobs_ai.workspace import build_workspace_paths
 
 
 class DatabasePostgresConfigTest(unittest.TestCase):
@@ -113,6 +126,66 @@ class DatabasePostgresConfigTest(unittest.TestCase):
         self.assertTrue(settings.database_fallback_triggered)
         self.assertEqual(settings.database_warning, POSTGRES_SQLITE_FALLBACK_WARNING)
         self.assertIsNone(settings.database_url)
+
+    def test_connect_database_falls_back_to_sqlite_on_postgres_connection_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sqlite_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            settings = load_settings(
+                {
+                    "JOBS_AI_SQLITE_PATH": str(sqlite_path),
+                    "DATABASE_URL": "postgresql://demo:secret@example.neon.tech/neondb?sslmode=require",
+                }
+            )
+
+            with patch(
+                "jobs_ai.db_runtime.psycopg.connect",
+                side_effect=RuntimeError("connection timed out"),
+            ):
+                with closing(connect_database(settings.database_path, settings=settings)) as connection:
+                    self.assertEqual(backend_name_for_connection(connection), "sqlite")
+                    self.assertTrue(fallback_triggered_for_connection(connection))
+                    self.assertEqual(
+                        fallback_reason_for_connection(connection),
+                        "connection timed out",
+                    )
+
+    def test_build_backend_status_reports_runtime_postgres_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sqlite_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+            with closing(connect_sqlite_database(sqlite_path)) as connection:
+                initialize_schema_connection(connection)
+                connection.commit()
+
+            settings = load_settings(
+                {
+                    "JOBS_AI_SQLITE_PATH": str(sqlite_path),
+                    "DATABASE_URL": "postgresql://demo:secret@example.neon.tech/neondb?sslmode=require",
+                }
+            )
+
+            with patch(
+                "jobs_ai.db_runtime.psycopg.connect",
+                side_effect=RuntimeError("DNS lookup failed"),
+            ):
+                result = build_backend_status(settings)
+
+        self.assertEqual(result.backend, "sqlite")
+        self.assertTrue(result.fallback_triggered)
+        self.assertEqual(result.warning, POSTGRES_SQLITE_RUNTIME_FALLBACK_WARNING)
+        self.assertEqual(result.fallback_reason, "DNS lookup failed")
+        self.assertTrue(result.reachable)
+        self.assertEqual(result.missing_tables, ())
+        self.assertEqual(
+            result.table_counts,
+            (
+                ("jobs", 0),
+                ("applications", 0),
+                ("application_tracking", 0),
+                ("session_history", 0),
+                ("source_registry", 0),
+            ),
+        )
 
 
 class DatabasePostgresSchemaTest(unittest.TestCase):
@@ -330,12 +403,14 @@ class DatabaseBackendReportingTest(unittest.TestCase):
                 backend="sqlite",
                 backend_source="default",
                 fallback_triggered=True,
+                fallback_reason="DATABASE_URL missing",
                 warning=POSTGRES_SQLITE_FALLBACK_WARNING,
                 target_label="runtime/jobs_ai.db",
                 sqlite_path=Path("runtime/jobs_ai.db"),
                 database_url_configured=False,
                 reachable=True,
                 missing_tables=(),
+                table_counts=(("jobs", 3), ("applications", 1)),
                 message="schema ready",
             )
         )
@@ -343,7 +418,11 @@ class DatabaseBackendReportingTest(unittest.TestCase):
         self.assertIn("active backend: sqlite", report)
         self.assertIn("backend source: default", report)
         self.assertIn("fallback triggered: yes", report)
+        self.assertIn("fallback reason: DATABASE_URL missing", report)
         self.assertIn(f"warning: {POSTGRES_SQLITE_FALLBACK_WARNING}", report)
+        self.assertIn("table row counts:", report)
+        self.assertIn("- jobs: 3", report)
+        self.assertIn("- applications: 1", report)
 
     def test_render_db_ping_report_shows_source_and_fallback(self) -> None:
         report = render_db_ping_report(
@@ -351,6 +430,7 @@ class DatabaseBackendReportingTest(unittest.TestCase):
                 backend="postgres",
                 backend_source="default",
                 fallback_triggered=False,
+                fallback_reason=None,
                 warning=None,
                 target_label="postgresql://demo@example.neon.tech/neondb",
                 ok=True,
@@ -361,6 +441,30 @@ class DatabaseBackendReportingTest(unittest.TestCase):
         self.assertIn("active backend: postgres", report)
         self.assertIn("backend source: default", report)
         self.assertIn("fallback triggered: no", report)
+        self.assertIn("fallback reason: n/a", report)
+
+    def test_render_db_status_report_shows_actual_backend_fallback_and_counts(self) -> None:
+        paths = build_workspace_paths(Path("data/jobs_ai.db"), project_root=Path.cwd())
+
+        report = render_db_status_report(
+            paths,
+            (),
+            backend="sqlite",
+            backend_source="default",
+            target_label="runtime/jobs_ai.db",
+            database_present=True,
+            fallback_triggered=True,
+            fallback_reason="connection timed out",
+            table_counts=(("jobs", 3), ("application_tracking", 1)),
+        )
+
+        self.assertIn("active backend: sqlite", report)
+        self.assertIn("backend source: default", report)
+        self.assertIn("fallback triggered: yes", report)
+        self.assertIn("fallback reason: connection timed out", report)
+        self.assertIn("table row counts:", report)
+        self.assertIn("- jobs: 3", report)
+        self.assertIn("- application_tracking: 1", report)
 
 
 class _RecordingCursor:
