@@ -1,0 +1,131 @@
+Back to jobs
+Data Engineer
+New York, Hybrid
+Data Engineer 
+
+Location: New York, NY or Hybrid
+
+The Opportunity
+
+Job Summary:
+
+We are looking for an experienced Data Engineer to join our dynamic team. In this role, you will design, build, and maintain scalable data pipelines that empower our data-driven decision-making. You will work with a modern tech stack, including Snowflake, Python, AWS, Kafka, Docker, Kubernetes, DBT, and Airflow, to optimize our data infrastructure and ensure efficient, reliable data flow across the organization. In addition to strong technical skills, you will collaborate with cross-functional teams and contribute innovative solutions and best practices to continuously improve our data processes and tools.
+
+Key Responsibilities:
+
+Data Pipeline Development: Design, develop, and maintain data pipelines for ingesting, processing, and transforming large datasets using Python.
+
+Data Warehousing: Leverage Snowflake to build and manage robust data warehouses, ensuring efficient storage and retrieval of data.
+
+Data Modeling & Transformations (DBT): Build, test, and maintain modular analytics models using DBT to ensure documented, versioned, and reliable transformations in Snowflake.
+
+ETL Processes: Implement ETL workflows using Python, Fivetran and Amazon DMS, ensuring data integrity, quality, and timely delivery.
+
+API Integration: Develop and integrate APIs to facilitate seamless data exchange between internal systems and external data sources. Work with RESTful or GraphQL APIs to ensure reliable data ingestion.
+
+Streaming Data Ingestion: Implement data ingestion solutions from streaming platforms, including Kafka, to handle real-time data processing.
+
+Orchestration & Scheduling: Use Apache Airflow to schedule and monitor data workflows, ensuring consistent and reliable pipeline execution.
+
+Containerization & Orchestration: Deploy and manage applications using Docker and Kubernetes to create scalable, containerized solutions.
+Optimization & Troubleshooting: Continuously monitor, optimize, and troubleshoot data processes and infrastructure for performance improvements and reliability.
+
+Qualifications:
+
+Education: Bachelor’s or Master’s degree in Computer Science, Engineering, Information Systems, or a related field, or equivalent practical experience in data engineering.
+
+Experience: 3+ years of experience in data engineering or software development, with a strong background in building data pipelines and working with modern data architectures.
+
+Technical Skills:
+
+Programming: Proficient in Python.
+
+Data Platforms: Hands-on experience with Snowflake, Fivetran, DBT, and Amazon DMS.
+
+APIs & Streaming: Experience with RESTful/GraphQL APIs and Kafka.
+
+Orchestration: Skilled with Apache Airflow, Docker, and Kubernetes.
+
+Analytical Skills: Strong problem-solving abilities, with attention to detail and a focus on data quality.
+
+Communication: Excellent verbal and written communication skills, with the ability to explain complex technical concepts to non-technical stakeholders.
+
+Team Collaboration: Proven experience working collaboratively in agile, cross-functional teams.
+
+Preferred Qualifications:
+
+Experience with additional programming languages such as Java or Scala.
+
+Knowledge of additional data integration or processing tools.
+
+Familiarity with cloud platforms (AWS, Google Cloud, or Azure) and their respective data services.
+
+Big Data Processing: Experience processing large datasets using technologies like PySpark.
+
+Flowcode is not for everyone. We hire with a pinhole lens — only those with the rare combination of intellectual horsepower, execution velocity, and uncompromising drive will thrive here. If you are seeking to operate at the highest levels of performance and impact, we want to meet you.
+
+How to Apply
+
+We are an equal opportunity employer and value diversity at our company. We do not discriminate on the basis of race, religion, color, national origin, gender, sexual orientation, age, marital status, veteran status, or disability status.
+
+A successful candidate’s starting pay will be determined based on the role, job-related skills, experience, qualifications, work location, and market conditions. The current range for this role is up to $150k - $170k plus equity. 
+
+ 
+
+#LI-DNI
+
+Create a Job Alert
+Interested in building your career at Flowcode? Get future opportunities sent straight to your email.
+Create alert
+Apply for this job
+*
+indicates a required field
+First Name*
+
+Last Name*
+
+Email*
+
+Phone
+Country*
++1
+
+
+Phone*
+
+Resume/CV*
+2026_Morales_Robert_Resume-2.pdf
+
+Cover Letter
+Attach
+Enter manually
+Accepted file types: pdf, doc, docx, txt, rtf
+Please provide your Linkedin Profile *
+
+Share a brief note on the most complex technical implementation you’ve ever led.*
+
+Are you located in the NYC area? *
+Select...
+
+
+
+If not, are you wiling to relocate?
+Select...
+
+
+Are you authorized to work in US?*
+Select...
+
+
+
+Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?*
+
+Please select the word that is not like the others*
+Select...
+
+
+
+To verify that you are not a bot
+
+Powered by
+

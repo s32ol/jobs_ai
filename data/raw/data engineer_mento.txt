@@ -1,0 +1,128 @@
+Autofilled from MyGreenhouse
+
+Mento Logo
+Back to jobs
+Data Engineer
+Remote
+About Mento
+
+Mento is a career technology company that helps people be exceptional and thrive at work through human, AI, and software-based coaching. We're on a mission to provide people access to the best support, advice, and mentorship at work and empower them to take action on it. In a world where jobs and careers are rapidly changing, we believe that transformational growth and continuous improvement is mandatory for people and companies to thrive. We are on a mission to bring our unique model of coaching to every member of the global workforce.
+
+We strive to create a fun, conscientious, collaborative, and supportive work environment. We are a US-based, remote-first company, backed by leading VCs and angel investors. 
+
+About The Role
+
+We're looking for our first Data Engineer to build the data infrastructure that powers insights and features across our coaching platform. You'll own data pipelines for coaching sessions, user analytics, and business operations, while establishing the foundation for our data architecture.
+
+This is not purely about business analytics - In this role, you'll join our engineering team and work closely with product, engineering, coaching, and leadership teams. You'll be embedded in product development—understanding feature requirements, instrumenting data collection, and building systems that power product capabilities. 
+
+Key Responsibilities:
+
+Build data pipelines for coaching and user analytics. You'll create pipelines that process coaching session data, user interactions, and AI-generated outputs. These pipelines will power everything from product analytics to coaching effectiveness metrics to business intelligence dashboards.
+
+Build data systems that power product features. You'll create data pipelines that feed back into the product—user progress tracking, coaching insights, customer dashboards, and more. You'll work with product and engineering to understand what data products need and build reliable systems to deliver it.
+
+Establish our data infrastructure and architecture. As our first data engineer, you'll make key decisions about our data stack—choosing and implementing tools for orchestration, transformation, warehousing, and analytics. You'll build foundations that can scale with the company.
+
+Process and analyze AI/LLM outputs. You'll work with data from our AI coaching systems, building pipelines to analyze LLM responses, track coaching quality, and generate insights about how users interact with AI coaches.
+
+Support business operations and analytics. You'll build data systems that track customer success metrics, billing data, user engagement, and operational KPIs. Your work will directly inform business decisions and product strategy.
+
+Create accessible analytics infrastructure. You'll build systems that make data available to non-technical stakeholders through dashboards, reports, and self-service analytics tools. You'll think about data quality, documentation, and usability.
+
+Work closely with product on instrumentation and data collection. You'll collaborate with product and engineering teams to instrument new features, define events and metrics, and ensure we're collecting the right data. You'll be involved in product discussions and understand feature requirements from a data perspective.
+
+Who We're Looking For
+
+We're looking for a data engineer with mid to senior-level experience who can work independently, make architectural decisions, and build data systems from the ground up.
+
+
+You have strong data engineering fundamentals. You're experienced with SQL, Python, and building data pipelines. You understand data modeling, ETL/ELT patterns, and how to design scalable data architectures. You've worked with databases like PostgreSQL and have opinions on data infrastructure tools.
+
+Bonus: You're comfortable with Go. Our backend stack is Ruby and Go, with new development preferentially in Go. While we are happy to use Python as the primary language for data work, comfort with Go is a plus for building production data services and working closely with the backend team.
+
+You can drive technical decisions about data infrastructure. You've evaluated and implemented data tools before—whether orchestration frameworks, warehouses, transformation tools, or BI platforms. You can assess our needs and recommend the right stack for an early-stage company.
+
+You're comfortable working with diverse data sources. You'll work with operational databases, event streams (Redis), document stores (Elasticsearch), API data, and LLM outputs. You can navigate different data formats and build reliable integrations.
+
+You're comfortable working closely with product teams. You've worked embedded with product and engineering, participated in product discussions, and built data systems that directly power product features. You understand the difference between building for analysis versus building for production product use.
+
+You can build both analytical and operational data pipelines. You've built pipelines for analytics and business intelligence, but you've also built systems that feed data back into products in real-time or near-real-time. You understand the different requirements and tradeoffs.
+
+You have some experience with AI/ML data. You've worked with LLM outputs, unstructured data, or analytics for AI-powered products. You understand the unique challenges of working with AI-generated content and can design appropriate data models.
+
+You work well independently in an early-stage environment. You're comfortable with ambiguity and can prioritize work without extensive direction. You can balance building for immediate needs while creating foundations for future scale.
+
+Why Work with Us?
+
+We are a company dedicated to empowering professionals to live meaningful careers. That starts with our culture at Mento.
+
+You're excited about building data infrastructure that serves multiple purposes—analytics, business intelligence, and powering product features. You want to work closely with product teams and see your data systems directly impact user experience.
+
+We work hard to foster a workplace built around trust, respect, and collaboration. As a remote-first company, we believe in flexibility and autonomy—as long as you're delivering great work and staying connected with your teammates, you can work from anywhere.
+
+This is an opportunity to join an early-stage, mission-driven team as the founding data engineer. You'll have significant ownership over our data architecture and direct impact on both product and business strategy.
+
+We strongly believe that diversity of experience, perspectives, and background will lead to a better environment for our employees and a better product for our users. If you're passionate about building data systems that help people thrive at work, we want to hear from you.
+
+ 
+
+Other benefits and perks include:
+
+✈️  Fully Remote - ability to work from anywhere with bi-annual team offsites
+
+💰  Competitive salary and equity
+
+🏥  Medical, dental, vision, and a 401k plan
+
+🌴  Unlimited vacation (We actually mean this! it's important to keep yourself fresh)
+
+💻  $500 home office stipend
+
+👥  Access to your own Mento Coach
+
+Create a Job Alert
+Interested in building your career at Mento? Get future opportunities sent straight to your email.
+Create alert
+Apply for this job
+*
+indicates a required field
+First Name*
+
+Last Name*
+
+Email*
+
+Phone
+Country*
++1
+
+
+Phone*
+
+Resume/CV*
+2026_Morales_Robert_Resume-2.pdf
+
+Cover Letter
+Attach
+Enter manually
+Accepted file types: pdf, doc, docx, txt, rtf
+LinkedIn Profile*
+
+Website
+
+If you were referred by a Mento employee, please tell us who:
+
+Are you located in the United States or Canada?*
+Select...
+
+
+
+Which of your previous positions were at small companies or early-stage startups?*
+
+What is a product you are proud of that you shipped to end users?*
+
+What is one consideration you think is important for building an LLM-powered or enabled product?*
+
+Powered by
+
