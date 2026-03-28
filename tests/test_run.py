@@ -191,6 +191,7 @@ class RunCommandTest(unittest.TestCase):
                     "executor_mode": "noop",
                     "capture_search_artifacts": True,
                     "use_registry": False,
+                    "us_only": False,
                 },
             )
             self.assertEqual(render_report.call_count, 1)
@@ -268,7 +269,7 @@ class RunCommandTest(unittest.TestCase):
             )
             self.assertEqual(manifest.items[0].title, "Analytics Engineer")
 
-    def test_cli_run_use_registry_reuses_existing_jobs_when_refresh_imports_zero(self) -> None:
+    def test_cli_run_use_registry_reuses_existing_jobs_when_refresh_imports_no_actionable_new_jobs(self) -> None:
         query = "analytics engineer san jose"
         fetcher = _mapping_fetcher(
             {
@@ -343,12 +344,12 @@ class RunCommandTest(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0)
             self.assertIn("intake mode: registry", result.stdout)
-            self.assertIn("imported jobs: 0", result.stdout)
+            self.assertIn("imported jobs: 2", result.stdout)
             self.assertIn("selected jobs: 1", result.stdout)
             self.assertIn(
                 (
                     "selection source: existing eligible jobs reused from prior imports "
-                    "because this registry refresh imported 0 new jobs"
+                    "because this registry refresh produced no actionable new jobs"
                 ),
                 result.stdout,
             )
@@ -366,11 +367,112 @@ class RunCommandTest(unittest.TestCase):
             self.assertEqual(manifest.selection_scope.source_query, query)
             self.assertEqual(
                 manifest.selection_scope.selection_mode,
-                "registry_refresh_empty_reused_existing",
+                "registry_refresh_no_actionable_new_reused_existing",
             )
             self.assertIsNotNone(manifest.selection_scope.refresh_batch_id)
             self.assertEqual(manifest.items[0].job_id, matching_job_id)
             self.assertEqual(manifest.items[0].title, "Analytics Engineer")
+
+    def test_cli_run_use_registry_us_only_marks_obvious_non_us_reused_jobs(self) -> None:
+        query = "analytics engineer"
+        fetcher = _mapping_fetcher(
+            {
+                "https://boards.greenhouse.io/acme": _fixture_text("greenhouse_board.html"),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+            register_verified_source(
+                database_path,
+                source_url="https://boards.greenhouse.io/acme",
+                company="Acme Data",
+                label="Acme Data",
+                provenance="fixture",
+                verification_reason_code="fixture",
+                verification_reason="fixture",
+            )
+
+            with closing(connect_database(database_path)) as connection:
+                _insert_job_with_status(
+                    connection,
+                    source="greenhouse",
+                    company="Acme Data",
+                    title="Data Engineer",
+                    location="Remote",
+                    apply_url="https://boards.greenhouse.io/acme/jobs/12345",
+                    portal_type="greenhouse",
+                    raw_payload={"description": "Python pipelines"},
+                )
+                us_job_id = _insert_job_with_status(
+                    connection,
+                    source="greenhouse",
+                    company="Acme Data",
+                    title="Analytics Engineer",
+                    location="San Jose, CA",
+                    apply_url="https://boards.greenhouse.io/acme/jobs/98765",
+                    portal_type="greenhouse",
+                    raw_payload={"description": "Looker dashboards"},
+                )
+                remote_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Remote Data",
+                    title="Analytics Engineer",
+                    location="Remote",
+                    apply_url="https://example.com/jobs/remote",
+                    raw_payload={"description": "Looker dashboards"},
+                )
+                non_us_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Northwind Talent",
+                    title="Analytics Engineer",
+                    location="Toronto, Canada",
+                    apply_url="https://example.com/jobs/canada",
+                    raw_payload={"description": "Looker dashboards"},
+                )
+                connection.commit()
+
+            with patch("jobs_ai.workspace.discover_project_root", return_value=project_root):
+                with patch("jobs_ai.run_workflow.fetch_text", side_effect=fetcher):
+                    result = RUNNER.invoke(
+                        app,
+                        [
+                            "run",
+                            query,
+                            "--use-registry",
+                            "--us-only",
+                            "--limit",
+                            "5",
+                            "--out-dir",
+                            "registry-operator",
+                        ],
+                        env=env,
+                    )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("us only: yes", result.stdout)
+            self.assertIn("location guard marked invalid_location: 1", result.stdout)
+            self.assertIn("selected jobs: 2", result.stdout)
+
+            manifest_files = sorted(
+                (project_root / "registry-operator").glob("launch-preview-session-*.json")
+            )
+            manifest = load_session_manifest(manifest_files[0])
+            self.assertEqual({item.job_id for item in manifest.items}, {us_job_id, remote_job_id})
+
+            self.assertEqual(
+                get_application_status(database_path, job_id=non_us_job_id).snapshot.current_status,
+                "invalid_location",
+            )
+            self.assertEqual(
+                get_application_status(database_path, job_id=remote_job_id).snapshot.current_status,
+                "new",
+            )
 
     def test_run_operator_workflow_aborts_before_follow_on_steps_when_discovery_fails(self) -> None:
         query = "python backend engineer remote"

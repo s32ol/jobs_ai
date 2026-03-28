@@ -102,10 +102,11 @@ class ApplicationAssistTest(unittest.TestCase):
             )
 
             result = RUNNER.invoke(app, ["application-assist", str(manifest_path)])
+            resolved_manifest_path = manifest_path.resolve()
 
             self.assertEqual(result.exit_code, 0)
             self.assertIn("jobs_ai application-assist", result.stdout)
-            self.assertIn(f"manifest path: {manifest_path}", result.stdout)
+            self.assertIn(f"manifest path: {resolved_manifest_path}", result.stdout)
             self.assertIn("launchable items: 1", result.stdout)
             self.assertIn("status: success", result.stdout)
             self.assertIn("tip: rerun with --portal-hints for portal-specific guidance", result.stdout)
@@ -115,7 +116,7 @@ class ApplicationAssistTest(unittest.TestCase):
             self.assertIn("Snippet: pipeline-delivery (Pipeline Delivery)", result.stdout)
             self.assertIn("Text: Python-first pipeline delivery across SQL warehouses.", result.stdout)
             self.assertIn(
-                f"python -m jobs_ai launch-dry-run --confirm --executor browser_stub {manifest_path}",
+                f"python -m jobs_ai launch-dry-run --confirm --executor browser_stub {resolved_manifest_path}",
                 result.stdout,
             )
 
@@ -197,14 +198,15 @@ class ApplicationAssistTest(unittest.TestCase):
             )
 
             result = RUNNER.invoke(app, ["application-assist", str(manifest_path)])
+            resolved_manifest_path = manifest_path.resolve()
 
             self.assertEqual(result.exit_code, 0)
             self.assertIn("jobs_ai application-assist", result.stdout)
-            self.assertIn(f"manifest path: {manifest_path}", result.stdout)
+            self.assertIn(f"manifest path: {resolved_manifest_path}", result.stdout)
             self.assertIn("launchable items: 0", result.stdout)
             self.assertIn("status: no launchable application assists", result.stdout)
             self.assertIn(
-                f"python -m jobs_ai launch-plan {manifest_path}",
+                f"python -m jobs_ai launch-plan {resolved_manifest_path}",
                 result.stdout,
             )
 

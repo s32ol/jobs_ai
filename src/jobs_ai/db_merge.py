@@ -21,6 +21,7 @@ _REQUIRED_JOB_COLUMNS = (
     "source_registry_id",
     "canonical_apply_url",
     "identity_key",
+    "applied_at",
 )
 
 _REGISTRY_STATUS_PRIORITY = {
@@ -461,6 +462,7 @@ def _merge_jobs(
             canonical_apply_url,
             identity_key,
             status,
+            applied_at,
             raw_json,
             created_at,
             updated_at
@@ -504,6 +506,7 @@ def _merge_jobs(
                     canonical_apply_url,
                     identity_key,
                     status,
+                    applied_at,
                     raw_json,
                     created_at
                 FROM jobs
@@ -551,10 +554,11 @@ def _merge_jobs(
                 canonical_apply_url,
                 identity_key,
                 status,
+                applied_at,
                 raw_json,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(row["source"]),
@@ -574,6 +578,7 @@ def _merge_jobs(
                 _nullable_text(row["canonical_apply_url"]),
                 _nullable_text(row["identity_key"]),
                 _normalize_job_status(row["status"]),
+                _nullable_text(row["applied_at"]),
                 _nullable_text(row["raw_json"]),
                 _coalesce_text(row["created_at"], merge_timestamp),
                 _coalesce_text(row["updated_at"], merge_timestamp),
@@ -928,6 +933,8 @@ def _build_job_updates(
         updates["canonical_apply_url"] = _nullable_text(source_row["canonical_apply_url"])
     if _nullable_text(existing_row["identity_key"]) is None and _nullable_text(source_row["identity_key"]) is not None:
         updates["identity_key"] = _nullable_text(source_row["identity_key"])
+    if _nullable_text(existing_row["applied_at"]) is None and _nullable_text(source_row["applied_at"]) is not None:
+        updates["applied_at"] = _nullable_text(source_row["applied_at"])
     if _nullable_text(existing_row["raw_json"]) is None and _nullable_text(source_row["raw_json"]) is not None:
         updates["raw_json"] = _nullable_text(source_row["raw_json"])
 

@@ -13,7 +13,14 @@ from .portal_support import detect_portal_type
 from .session_manifest import load_session_manifest
 
 APPLICATION_LOG_METHOD = "jobs_ai application-assist"
-APPLICATION_LOG_STATUSES = tuple(dict.fromkeys((*SESSION_MARK_APPLICATION_STATUSES, "failed")))
+APPLICATION_LOG_TRACKING_STATUSES = tuple(
+    status
+    for status in SESSION_MARK_APPLICATION_STATUSES
+    if status not in {"invalid_location", "superseded"}
+)
+APPLICATION_LOG_STATUSES = tuple(
+    dict.fromkeys((*APPLICATION_LOG_TRACKING_STATUSES, "failed"))
+)
 
 _FILENAME_TOKEN_RE = re.compile(r"[^a-z0-9]+")
 _HYPHEN_RE = re.compile(r"-{2,}")

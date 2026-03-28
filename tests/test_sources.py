@@ -249,6 +249,73 @@ class SourceRegistryTest(unittest.TestCase):
             self.assertEqual(row["count"], 2)
             self.assertTrue((project_root / "registry-collect" / "leads.import.json").exists())
 
+    def test_cli_sources_collect_import_auto_skips_filtered_titles(self) -> None:
+        filtered_board_html = _fixture_text("greenhouse_board.html").replace(
+            "Data Engineer",
+            "Associate Legal Counsel",
+            1,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+
+            with patch("jobs_ai.workspace.discover_project_root", return_value=project_root):
+                with patch(
+                    "jobs_ai.sources.registry.fetch_text",
+                    side_effect=_mapping_fetcher(
+                        {
+                            "https://boards.greenhouse.io/acme": filtered_board_html,
+                        }
+                    ),
+                ):
+                    RUNNER.invoke(
+                        app,
+                        ["sources", "add", "https://boards.greenhouse.io/acme"],
+                        env=env,
+                    )
+
+                with patch(
+                    "jobs_ai.sources.workflow.fetch_text",
+                    side_effect=_mapping_fetcher(
+                        {
+                            "https://boards.greenhouse.io/acme": filtered_board_html,
+                        }
+                    ),
+                ):
+                    collect_result = RUNNER.invoke(
+                        app,
+                        [
+                            "sources",
+                            "collect",
+                            "--import",
+                            "--out-dir",
+                            "registry-collect",
+                        ],
+                        env=env,
+                    )
+
+            self.assertEqual(collect_result.exit_code, 0)
+            self.assertIn("imported jobs: 2", collect_result.stdout)
+            self.assertIn(
+                "auto-skip: title matched filter -> Associate Legal Counsel",
+                collect_result.stdout,
+            )
+
+            with closing(connect_database(database_path)) as connection:
+                rows = connection.execute(
+                    "SELECT title, status FROM jobs ORDER BY title"
+                ).fetchall()
+
+            self.assertEqual(
+                [(row["title"], row["status"]) for row in rows],
+                [
+                    ("Analytics Engineer", "new"),
+                    ("Associate Legal Counsel", "skipped"),
+                ],
+            )
+
     def test_cli_sources_extract_jobposting_imports_jobs_links_registry_and_skips_duplicates(self) -> None:
         html_text = """
 <!doctype html>

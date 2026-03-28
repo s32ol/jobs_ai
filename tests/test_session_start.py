@@ -14,10 +14,17 @@ SRC_PATH = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
+from jobs_ai.application_assist import build_application_assist
 from jobs_ai.cli import app
-from jobs_ai.db import connect_database, initialize_schema, insert_job
+from jobs_ai.db import (
+    connect_database,
+    initialize_schema,
+    insert_job,
+    resolve_canonical_duplicates_for_job,
+)
 from jobs_ai.launch_preview import select_launch_preview
 from jobs_ai.session_manifest import load_session_manifest
+from jobs_ai.session_start import start_session
 
 RUNNER = CliRunner()
 
@@ -175,6 +182,56 @@ class SessionStartTest(unittest.TestCase):
             self.assertEqual(manifest.selection_scope.source_query, "python backend engineer remote")
             self.assertEqual(manifest.items[0].job_id, scoped_job_id)
 
+    def test_start_session_us_only_excludes_obvious_non_us_rows_from_manifest_and_application_assist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            exports_dir = project_root / "data" / "exports"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                us_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Acme Data",
+                    title="Analytics Engineer",
+                    location="Sacramento, California, United States",
+                    apply_url="https://example.com/jobs/us",
+                    raw_payload={"description": "Looker dashboards"},
+                )
+                remote_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Remote Data",
+                    title="Analytics Engineer",
+                    location="Remote",
+                    apply_url="https://example.com/jobs/remote",
+                    raw_payload={"description": "Looker dashboards"},
+                )
+                canada_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Northwind Talent",
+                    title="Analytics Engineer",
+                    location="Toronto, Canada",
+                    apply_url="https://example.com/jobs/canada",
+                    raw_payload={"description": "Looker dashboards"},
+                )
+                connection.commit()
+
+            result = start_session(
+                database_path,
+                project_root=project_root,
+                default_exports_dir=exports_dir,
+                limit=10,
+                us_only=True,
+            )
+            assist = build_application_assist(result.plan)
+
+            self.assertEqual({item.preview.job_id for item in result.items}, {us_job_id, remote_job_id})
+            self.assertEqual({item.job_id for item in assist.assist_items}, {us_job_id, remote_job_id})
+            self.assertNotIn(canada_job_id, {item.job_id for item in assist.assist_items})
+
     def test_cli_session_start_without_scope_keeps_global_new_job_behavior(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             project_root = Path(tmp_dir) / "workspace"
@@ -218,6 +275,48 @@ class SessionStartTest(unittest.TestCase):
                 {item.job_id for item in manifest.items},
                 {first_job_id, second_job_id},
             )
+
+    def test_cli_session_start_excludes_superseded_duplicates_from_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir) / "workspace"
+            database_path = project_root / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Qualified Health",
+                    title="Data Engineer",
+                    location="Remote",
+                    apply_url="https://boards.greenhouse.io/qualifiedhealth?gh_jid=12345&utm_source=test",
+                    portal_type="greenhouse",
+                    raw_payload={"description": "Python pipelines"},
+                )
+                canonical_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Qualified Health",
+                    title="Sr. Data Engineer - Healthcare Data Infrastructure",
+                    location="Remote",
+                    apply_url="https://boards.greenhouse.io/qualifiedhealth/jobs/12345",
+                    portal_type="greenhouse",
+                    raw_payload={"description": "Python pipelines"},
+                )
+                resolve_canonical_duplicates_for_job(connection, job_id=canonical_job_id)
+                connection.commit()
+
+            with patch("jobs_ai.workspace.discover_project_root", return_value=project_root):
+                result = RUNNER.invoke(app, ["session", "start", "--limit", "5"], env=env)
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("selected jobs: 1", result.stdout)
+
+            export_files = sorted((project_root / "data" / "exports").glob("launch-preview-session-*.json"))
+            manifest = load_session_manifest(export_files[0])
+            self.assertEqual(manifest.item_count, 1)
+            self.assertEqual(manifest.items[0].job_id, canonical_job_id)
             self.assertIsNone(manifest.selection_scope)
 
     def test_cli_session_start_freezes_one_preview_batch_and_summary_matches_manifest(self) -> None:

@@ -82,6 +82,7 @@ def start_session(
     source_query: str | None = None,
     job_query: str | None = None,
     selection_scope: SessionSelectionScope | None = None,
+    us_only: bool = False,
 ) -> SessionStartResult:
     resolved_selection_scope = (
         selection_scope
@@ -97,6 +98,7 @@ def start_session(
         limit=limit,
         ingest_batch_id=ingest_batch_id,
         query_text=job_query,
+        us_only=us_only,
     )
     return start_session_from_previews(
         database_path,

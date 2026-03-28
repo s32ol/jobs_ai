@@ -30,6 +30,7 @@ _REQUIRED_JOB_COLUMNS = (
     "source_registry_id",
     "canonical_apply_url",
     "identity_key",
+    "applied_at",
 )
 
 _SOURCE_REGISTRY_COLUMNS = (
@@ -69,6 +70,7 @@ _JOB_COLUMNS = (
     "canonical_apply_url",
     "identity_key",
     "status",
+    "applied_at",
     "raw_json",
     "created_at",
     "updated_at",
@@ -816,6 +818,7 @@ def _copy_jobs(
                 canonical_apply_url,
                 identity_key,
                 status,
+                applied_at,
                 raw_json,
                 created_at,
                 updated_at
@@ -865,6 +868,7 @@ def _copy_jobs(
                         canonical_apply_url,
                         identity_key,
                         status,
+                        applied_at,
                         raw_json,
                         created_at,
                         updated_at
@@ -897,12 +901,13 @@ def _copy_jobs(
                     canonical_apply_url,
                     identity_key,
                     status,
+                    applied_at,
                     raw_json,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                tuple(values[column_name] for column_name in values),
+                tuple(values[column_name] for column_name in _JOB_COLUMNS),
             )
             inserted_count += 1
             target_id = int(values["id"])
@@ -933,6 +938,7 @@ def _copy_jobs(
                         canonical_apply_url = ?,
                         identity_key = ?,
                         status = ?,
+                        applied_at = ?,
                         raw_json = ?,
                         created_at = ?,
                         updated_at = ?
@@ -956,6 +962,7 @@ def _copy_jobs(
                         values["canonical_apply_url"],
                         values["identity_key"],
                         values["status"],
+                        values["applied_at"],
                         values["raw_json"],
                         values["created_at"],
                         values["updated_at"],
@@ -1176,6 +1183,7 @@ def _job_values_from_row(
         "canonical_apply_url": canonical_apply_url,
         "identity_key": identity_key,
         "status": _normalize_value(row["status"]) or "new",
+        "applied_at": _normalize_value(row["applied_at"]) if "applied_at" in row.keys() else None,
         "raw_json": _normalize_value(row["raw_json"]),
         "created_at": _normalize_value(row["created_at"]),
         "updated_at": _normalize_value(row["updated_at"]),

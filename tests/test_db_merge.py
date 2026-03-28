@@ -136,6 +136,7 @@ def _insert_job_row(
     ingest_batch_id: str | None = None,
     source_query: str | None = None,
     import_source: str | None = None,
+    applied_at: str | None = None,
     raw_json: str | None = None,
     created_at: str | None = None,
     updated_at: str | None = None,
@@ -171,10 +172,11 @@ def _insert_job_row(
             canonical_apply_url,
             identity_key,
             status,
+            applied_at,
             raw_json,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             source,
@@ -194,6 +196,7 @@ def _insert_job_row(
             identity.canonical_apply_url,
             identity.identity_key,
             status,
+            applied_at,
             raw_json or json.dumps({"company": company, "title": title}, ensure_ascii=True),
             created_at or found_at,
             updated_at or created_at or found_at,
@@ -424,8 +427,9 @@ class DatabaseMergeTest(unittest.TestCase):
                     apply_url="https://boards.greenhouse.io/acme?gh_jid=12345&utm_source=laptop",
                     portal_type="greenhouse",
                     source_registry_id=source_registry_id,
-                    status="opened",
+                    status="applied",
                     found_at="2026-03-12T08:00:00Z",
+                    applied_at="2026-03-12T08:30:00Z",
                 )
                 _insert_application_row(
                     source_connection,
@@ -463,7 +467,7 @@ class DatabaseMergeTest(unittest.TestCase):
                     "SELECT job_id, status FROM application_tracking"
                 ).fetchall()
                 merged_job_row = connection.execute(
-                    "SELECT id, status, source_registry_id FROM jobs WHERE id = ?",
+                    "SELECT id, status, source_registry_id, applied_at FROM jobs WHERE id = ?",
                     (target_job_id,),
                 ).fetchone()
 
@@ -476,6 +480,7 @@ class DatabaseMergeTest(unittest.TestCase):
             self.assertEqual(tracking_rows[0]["status"], "applied")
             self.assertEqual(merged_job_row["status"], "applied")
             self.assertEqual(int(merged_job_row["source_registry_id"]), target_registry_id)
+            self.assertEqual(merged_job_row["applied_at"], "2026-03-12T08:30:00Z")
 
     def test_merge_updates_source_registry_by_normalized_url_and_remaps_new_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -636,6 +641,7 @@ class DatabaseMergeTest(unittest.TestCase):
             self.assertIn("source_registry", result.source_schema_before.missing_tables)
             self.assertIn("canonical_apply_url", result.source_schema_before.missing_job_columns)
             self.assertIn("identity_key", result.source_schema_before.missing_job_columns)
+            self.assertIn("applied_at", result.source_schema_before.missing_job_columns)
 
             with closing(connect_database(target_path)) as target_connection:
                 target_row = target_connection.execute(
@@ -643,7 +649,8 @@ class DatabaseMergeTest(unittest.TestCase):
                     SELECT
                         canonical_apply_url,
                         identity_key,
-                        status
+                        status,
+                        applied_at
                     FROM jobs
                     LIMIT 1
                     """
@@ -667,6 +674,7 @@ class DatabaseMergeTest(unittest.TestCase):
             )
             self.assertTrue(target_row["identity_key"])
             self.assertEqual(target_row["status"], "opened")
+            self.assertIsNone(target_row["applied_at"])
             self.assertTrue(
                 {
                     "ingest_batch_id",
@@ -675,6 +683,7 @@ class DatabaseMergeTest(unittest.TestCase):
                     "source_registry_id",
                     "canonical_apply_url",
                     "identity_key",
+                    "applied_at",
                 }.issubset(source_columns)
             )
             self.assertIn("session_history", source_tables)

@@ -14,6 +14,13 @@ _COLLAPSE_WHITESPACE_FIELDS = frozenset(
     }
 )
 _REPEATED_WHITESPACE_RE = re.compile(r"\s+")
+_AUTO_SKIP_TITLE_KEYWORDS = (
+    "legal",
+    "counsel",
+    "attorney",
+    "paralegal",
+)
+AUTO_SKIP_REASON = "auto_filtered_role"
 
 
 def normalize_job_import_fields(
@@ -41,3 +48,11 @@ def normalize_job_import_value(field: str, value: object) -> str | None:
         text = text.lower()
 
     return text
+
+
+def should_auto_skip_job(title: str) -> bool:
+    normalized_title = normalize_job_import_value("title", title)
+    if normalized_title is None:
+        return False
+    lowered_title = normalized_title.casefold()
+    return any(keyword in lowered_title for keyword in _AUTO_SKIP_TITLE_KEYWORDS)

@@ -14,14 +14,39 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from jobs_ai.cli import app
-from jobs_ai.db import connect_database
+from jobs_ai.db import connect_database, initialize_schema, insert_job
 from jobs_ai.jobs.importer import OPTIONAL_IMPORT_FIELDS, REQUIRED_IMPORT_FIELDS
-from jobs_ai.jobs.normalization import normalize_job_import_fields
+from jobs_ai.jobs.normalization import normalize_job_import_fields, should_auto_skip_job
+from jobs_ai.jobs.queue import select_apply_queue
 
 RUNNER = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SAMPLE_IMPORT_PATH = REPO_ROOT / "data" / "raw" / "sample_job_leads.json"
 IMPORT_FIELDS = REQUIRED_IMPORT_FIELDS + OPTIONAL_IMPORT_FIELDS
+
+
+def _job_record(
+    *,
+    source: str,
+    company: str,
+    title: str,
+    location: str,
+    apply_url: str | None = None,
+    portal_type: str | None = None,
+) -> dict[str, object]:
+    return {
+        "source": source,
+        "source_job_id": None,
+        "company": company,
+        "title": title,
+        "location": location,
+        "apply_url": apply_url,
+        "portal_type": portal_type,
+        "salary_text": None,
+        "posted_at": None,
+        "found_at": "2026-03-13T08:00:00Z",
+        "raw_json": json.dumps({}, ensure_ascii=True),
+    }
 
 
 class ImportTest(unittest.TestCase):
@@ -84,6 +109,11 @@ class ImportTest(unittest.TestCase):
         )
 
         self.assertEqual(normalized["portal_type"], "workday")
+
+    def test_should_auto_skip_job_matches_filtered_titles(self) -> None:
+        self.assertTrue(should_auto_skip_job("Senior Legal Counsel"))
+        self.assertTrue(should_auto_skip_job("PARALEGAL, Employment"))
+        self.assertFalse(should_auto_skip_job("Senior Data Engineer"))
 
     def test_cli_import_loads_sample_json_into_jobs_table(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -184,48 +214,164 @@ class ImportTest(unittest.TestCase):
             self.assertIsNone(row["salary_text"])
             self.assertEqual(json.loads(row["raw_json"]), payload[0])
 
-    def test_cli_import_skips_duplicate_by_exact_apply_url(self) -> None:
+    def test_cli_import_auto_skips_filtered_titles_and_keeps_them_out_of_queue(self) -> None:
         payload = [
             {
                 "source": "manual",
-                "company": "Bright Metrics",
-                "title": "Platform Data Engineer",
+                "company": "Acme Corp",
+                "title": "Senior Legal Counsel",
                 "location": "Remote",
-                "apply_url": "https://example.com/jobs/platform-data-engineer",
-            },
-            {
-                "source": "manual",
-                "company": "Another Company",
-                "title": "Different Title",
-                "location": "Hybrid",
-                "apply_url": "https://example.com/jobs/platform-data-engineer",
-            },
+                "apply_url": "https://example.com/jobs/legal-counsel",
+            }
         ]
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             database_path = tmp_path / "runtime" / "jobs_ai.db"
-            input_path = tmp_path / "duplicate_apply_url.json"
+            input_path = tmp_path / "auto_skip_job_leads.json"
             input_path.write_text(json.dumps(payload), encoding="utf-8")
             env = {"JOBS_AI_DB_PATH": str(database_path)}
 
             result = RUNNER.invoke(app, ["import", str(input_path)], env=env)
 
             self.assertEqual(result.exit_code, 0)
+            self.assertIn("auto-skip: title matched filter", result.stdout)
             self.assertIn("inserted: 1", result.stdout)
-            self.assertIn("skipped: 1", result.stdout)
-            self.assertIn("status: success", result.stdout)
-            self.assertIn("skipped records:", result.stdout)
-            self.assertIn(
-                "record 2: duplicate skipped via exact apply_url match: "
-                "https://example.com/jobs/platform-data-engineer",
-                result.stdout,
-            )
 
             with closing(connect_database(database_path)) as connection:
-                row = connection.execute("SELECT COUNT(*) AS count FROM jobs").fetchone()
+                row = connection.execute(
+                    """
+                    SELECT title, status, raw_json
+                    FROM jobs
+                    LIMIT 1
+                    """
+                ).fetchone()
 
-            self.assertEqual(row["count"], 1)
+            self.assertEqual(row["title"], "Senior Legal Counsel")
+            self.assertEqual(row["status"], "skipped")
+            self.assertEqual(json.loads(row["raw_json"])["reason"], "auto_filtered_role")
+            self.assertEqual(select_apply_queue(database_path), ())
+
+    def test_cli_import_prefers_more_specific_title_for_exact_apply_url_duplicates(self) -> None:
+        payload = [
+            {
+                "source": "manual",
+                "company": "Qualified Health",
+                "title": "Data Engineer",
+                "location": "Remote",
+                "apply_url": "https://example.com/jobs/data-engineer",
+            },
+            {
+                "source": "manual",
+                "company": "Qualified Health",
+                "title": "Sr. Data Engineer - Healthcare Data Infrastructure",
+                "location": "Remote",
+                "apply_url": "https://example.com/jobs/data-engineer",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            database_path = tmp_path / "runtime" / "jobs_ai.db"
+            input_path = tmp_path / "duplicate_apply_url_specificity.json"
+            input_path.write_text(json.dumps(payload), encoding="utf-8")
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+
+            result = RUNNER.invoke(app, ["import", str(input_path)], env=env)
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("inserted: 2", result.stdout)
+            self.assertIn("duplicates skipped: 0", result.stdout)
+            self.assertIn("canonical duplicate groups resolved: 1", result.stdout)
+            self.assertIn("rows marked superseded: 1", result.stdout)
+            self.assertIn("status: success", result.stdout)
+
+            with closing(connect_database(database_path)) as connection:
+                rows = connection.execute(
+                    "SELECT title, status FROM jobs ORDER BY id"
+                ).fetchall()
+
+            self.assertEqual(
+                [(row["title"], row["status"]) for row in rows],
+                [
+                    ("Data Engineer", "superseded"),
+                    ("Sr. Data Engineer - Healthcare Data Infrastructure", "new"),
+                ],
+            )
+
+    def test_cli_import_collapses_existing_applied_cluster_to_one_applied_row(self) -> None:
+        payload = [
+            {
+                "source": "manual",
+                "company": "Qualified Health",
+                "title": "Platform Data Engineer",
+                "location": "Remote",
+                "apply_url": "https://example.com/jobs/data-engineer",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            database_path = tmp_path / "runtime" / "jobs_ai.db"
+            input_path = tmp_path / "duplicate_apply_url_applied_cluster.json"
+            input_path.write_text(json.dumps(payload), encoding="utf-8")
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                applied_job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Qualified Health",
+                        title="Data Engineer",
+                        location="Remote",
+                        apply_url="https://example.com/jobs/data-engineer",
+                    ),
+                )
+                specific_job_id = insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Qualified Health",
+                        title="Sr. Data Engineer - Healthcare Data Infrastructure",
+                        location="Remote",
+                        apply_url="https://example.com/jobs/data-engineer",
+                    ),
+                )
+                connection.execute(
+                    "UPDATE jobs SET status = 'applied', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (applied_job_id,),
+                )
+                connection.execute(
+                    "UPDATE jobs SET status = 'opened', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (specific_job_id,),
+                )
+                connection.commit()
+
+            result = RUNNER.invoke(app, ["import", str(input_path)], env=env)
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("inserted: 1", result.stdout)
+            self.assertIn("canonical duplicate groups resolved: 1", result.stdout)
+            self.assertIn("rows marked superseded: 2", result.stdout)
+
+            with closing(connect_database(database_path)) as connection:
+                rows = connection.execute(
+                    "SELECT id, title, status FROM jobs ORDER BY id"
+                ).fetchall()
+
+            self.assertEqual(
+                [(row["title"], row["status"]) for row in rows],
+                [
+                    ("Data Engineer", "applied"),
+                    (
+                        "Sr. Data Engineer - Healthcare Data Infrastructure",
+                        "superseded",
+                    ),
+                    ("Platform Data Engineer", "superseded"),
+                ],
+            )
 
     def test_cli_import_skips_duplicate_by_exact_fallback_key_when_apply_url_missing(self) -> None:
         payload = [
@@ -315,7 +461,55 @@ class ImportTest(unittest.TestCase):
                 ],
             )
 
-    def test_cli_import_skips_duplicate_by_canonical_portal_apply_url_across_runs(self) -> None:
+    def test_cli_import_auto_supersedes_duplicate_by_raw_apply_url(self) -> None:
+        payload = [
+            {
+                "source": "manual",
+                "company": "Bright Metrics",
+                "title": "Platform Data Engineer",
+                "location": "Remote",
+                "apply_url": "https://example.com/jobs/platform-data-engineer",
+            },
+            {
+                "source": "manual",
+                "company": "Bright Metrics",
+                "title": "Platform Data Engineer",
+                "location": "Remote",
+                "apply_url": "https://example.com/jobs/platform-data-engineer",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            database_path = tmp_path / "runtime" / "jobs_ai.db"
+            input_path = tmp_path / "duplicate_apply_url.json"
+            input_path.write_text(json.dumps(payload), encoding="utf-8")
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+
+            result = RUNNER.invoke(app, ["import", str(input_path)], env=env)
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("inserted: 2", result.stdout)
+            self.assertIn("duplicates skipped: 0", result.stdout)
+            self.assertIn("canonical duplicate groups resolved: 1", result.stdout)
+            self.assertIn("rows marked superseded: 1", result.stdout)
+            self.assertIn("status: success", result.stdout)
+
+            with closing(connect_database(database_path)) as connection:
+                rows = connection.execute(
+                    "SELECT id, apply_url, canonical_apply_url, status FROM jobs ORDER BY id"
+                ).fetchall()
+
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(
+                [row["status"] for row in rows],
+                ["new", "superseded"],
+            )
+            self.assertEqual(rows[0]["apply_url"], "https://example.com/jobs/platform-data-engineer")
+            self.assertEqual(rows[0]["canonical_apply_url"], "https://example.com/jobs/platform-data-engineer")
+            self.assertEqual(rows[1]["canonical_apply_url"], "https://example.com/jobs/platform-data-engineer")
+
+    def test_cli_import_auto_supersedes_duplicate_by_canonical_portal_apply_url_across_runs(self) -> None:
         first_payload = [
             {
                 "source": "manual",
@@ -360,22 +554,32 @@ class ImportTest(unittest.TestCase):
             self.assertEqual(first_result.exit_code, 0)
             self.assertEqual(second_result.exit_code, 0)
             self.assertIn("inserted: 1", first_result.stdout)
-            self.assertIn("inserted: 0", second_result.stdout)
-            self.assertIn("duplicates skipped: 1", second_result.stdout)
-            self.assertIn(
-                "record 1: duplicate skipped via canonical apply_url match: "
-                "https://boards.greenhouse.io/acme/jobs/12345",
-                second_result.stdout,
-            )
+            self.assertIn("inserted: 1", second_result.stdout)
+            self.assertIn("duplicates skipped: 0", second_result.stdout)
+            self.assertIn("canonical duplicate groups resolved: 1", second_result.stdout)
+            self.assertIn("rows marked superseded: 1", second_result.stdout)
 
             with closing(connect_database(database_path)) as connection:
                 rows = connection.execute(
-                    "SELECT apply_url, canonical_apply_url, ingest_batch_id FROM jobs ORDER BY id"
+                    "SELECT apply_url, canonical_apply_url, ingest_batch_id, status FROM jobs ORDER BY id"
                 ).fetchall()
 
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["canonical_apply_url"], "https://boards.greenhouse.io/acme/jobs/12345")
-            self.assertEqual(rows[0]["ingest_batch_id"], "first-run")
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(
+                [row["status"] for row in rows],
+                ["new", "superseded"],
+            )
+            self.assertEqual(
+                [row["canonical_apply_url"] for row in rows],
+                [
+                    "https://boards.greenhouse.io/acme/jobs/12345",
+                    "https://boards.greenhouse.io/acme/jobs/12345",
+                ],
+            )
+            self.assertEqual(
+                [row["ingest_batch_id"] for row in rows],
+                ["first-run", "second-run"],
+            )
 
     def test_cli_import_tags_rows_with_batch_metadata_for_later_session_scoping(self) -> None:
         payload = [
@@ -426,7 +630,7 @@ class ImportTest(unittest.TestCase):
 
             self.assertEqual(row["ingest_batch_id"], "evening-batch")
             self.assertEqual(row["source_query"], "python backend engineer remote")
-            self.assertEqual(row["import_source"], str(input_path))
+            self.assertEqual(row["import_source"], str(input_path.resolve()))
 
     def test_cli_import_reports_invalid_records_clearly(self) -> None:
         payload = [

@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..db import connect_database
+from .location_guard import location_allowed_in_us_only_mode
 from .query_filter import job_matches_query
 from .scoring import ScoredJob, rank_jobs
 
-QUEUEABLE_JOBS_SQL = """
+QUEUEABLE_JOBS_BASE_SQL = """
 SELECT
     id,
     source,
@@ -22,8 +23,6 @@ SELECT
     raw_json
 FROM jobs
 WHERE status = 'new'
-  AND (? IS NULL OR ingest_batch_id = ?)
-ORDER BY id
 """
 
 
@@ -52,15 +51,19 @@ def select_ranked_apply_queue(
     limit: int | None = None,
     ingest_batch_id: str | None = None,
     query_text: str | None = None,
+    us_only: bool = False,
 ) -> tuple[RankedQueuedJob, ...]:
+    queueable_jobs_sql, params = _queueable_jobs_query(ingest_batch_id=ingest_batch_id)
     with closing(connect_database(database_path)) as connection:
         rows = connection.execute(
-            QUEUEABLE_JOBS_SQL,
-            (ingest_batch_id, ingest_batch_id),
+            queueable_jobs_sql,
+            params,
         ).fetchall()
 
     if query_text is not None:
         rows = [row for row in rows if job_matches_query(row, query_text)]
+    if us_only:
+        rows = [row for row in rows if location_allowed_in_us_only_mode(_location_value(row))]
 
     ranked_jobs = rank_jobs(rows)
     if limit is not None:
@@ -70,7 +73,7 @@ def select_ranked_apply_queue(
         RankedQueuedJob(
             rank=index,
             scored_job=job,
-            reason_summary=_queue_reason_summary(job),
+            reason_summary=summarize_queue_reason(job),
         )
         for index, job in enumerate(ranked_jobs, start=1)
     )
@@ -82,12 +85,14 @@ def select_apply_queue(
     limit: int | None = None,
     ingest_batch_id: str | None = None,
     query_text: str | None = None,
+    us_only: bool = False,
 ) -> tuple[QueuedJob, ...]:
     ranked_queued_jobs = select_ranked_apply_queue(
         database_path,
         limit=limit,
         ingest_batch_id=ingest_batch_id,
         query_text=query_text,
+        us_only=us_only,
     )
     return tuple(
         QueuedJob(
@@ -104,7 +109,7 @@ def select_apply_queue(
     )
 
 
-def _queue_reason_summary(job: ScoredJob) -> str:
+def summarize_queue_reason(job: ScoredJob) -> str:
     parts: list[str] = []
     if job.matched_target_role is not None:
         parts.append(f"role={job.matched_target_role}")
@@ -119,3 +124,28 @@ def _queue_reason_summary(job: ScoredJob) -> str:
     if parts:
         return "; ".join(parts)
     return "no strong score signals yet"
+
+
+def _queueable_jobs_query(*, ingest_batch_id: str | None) -> tuple[str, tuple[object, ...]]:
+    if ingest_batch_id is None:
+        return (
+            f"{QUEUEABLE_JOBS_BASE_SQL}\nORDER BY id\n",
+            (),
+        )
+    return (
+        f"{QUEUEABLE_JOBS_BASE_SQL}\n  AND ingest_batch_id = ?\nORDER BY id\n",
+        (ingest_batch_id,),
+    )
+
+
+def _location_value(row) -> str | None:
+    try:
+        value = row["location"]
+    except (KeyError, TypeError):
+        return None
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized_value = value.strip()
+        return normalized_value or None
+    return str(value)

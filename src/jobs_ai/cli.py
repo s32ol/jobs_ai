@@ -23,14 +23,21 @@ from .application_tracking import (
     SESSION_MARK_APPLICATION_STATUSES,
     get_application_status,
     list_application_statuses,
+    normalize_application_status,
     record_application_status,
+    record_application_statuses,
 )
 from .config import load_settings
-from .db import initialize_schema
+from .db import find_jobs_by_apply_url, find_jobs_by_apply_url_inspect, initialize_schema
 from .db_merge import merge_sqlite_databases
 from .db_postgres import build_backend_status, migrate_sqlite_to_postgres, ping_database_target
 from .db_runtime import resolve_database_runtime
-from .maintenance import backfill_jobs_metadata
+from .job_reference import inspect_job_reference, open_job_reference, resolve_job_reference
+from .maintenance import (
+    backfill_jobs_metadata,
+    mark_invalid_location_jobs,
+    repair_canonical_duplicate_statuses,
+)
 from .jobs.importer import JobImportResult, import_jobs_from_file
 from .jobs.fast_apply import (
     DEFAULT_FAST_APPLY_LIMIT,
@@ -54,6 +61,11 @@ from .main import (
     APPLY_HARD_MAX_LIMIT,
     render_apply_error_report,
     render_apply_report,
+    render_apply_url_already_applied_report,
+    render_apply_url_error_report,
+    render_apply_url_mark_report,
+    render_apply_url_multiple_matches_report,
+    render_apply_url_no_match_report,
     render_application_assist_error_report,
     render_application_log_error_report,
     render_application_log_report,
@@ -63,11 +75,16 @@ from .main import (
     render_board_census_report,
     render_collect_error_report,
     render_collect_report,
+    render_check_url_error_report,
+    render_check_url_inspect_report,
+    render_check_url_report,
     render_discover_error_report,
     render_discover_report,
     render_application_tracking_error_report,
+    render_application_tracking_batch_mark_report,
     render_application_tracking_list_report,
     render_application_tracking_mark_report,
+    render_application_tracking_reference_mark_report,
     render_application_tracking_status_report,
     render_run_discover_failure_report,
     render_run_error_report,
@@ -84,11 +101,19 @@ from .main import (
     render_doctor_report,
     render_maintenance_backfill_error_report,
     render_maintenance_backfill_report,
+    render_maintenance_canonical_duplicates_error_report,
+    render_maintenance_canonical_duplicates_report,
+    render_maintenance_invalid_location_error_report,
+    render_maintenance_invalid_location_report,
     render_launch_dry_run_report,
     render_launch_dry_run_error_report,
     render_launch_execution_summary,
     render_launch_plan_error_report,
     render_launch_plan_report,
+    render_job_reference_inspect_error_report,
+    render_job_reference_inspect_report,
+    render_job_reference_open_error_report,
+    render_job_reference_open_report,
     render_open_error_report,
     render_open_prompt,
     render_open_unchanged_report,
@@ -230,7 +255,8 @@ session_app = typer.Typer(
 maintenance_app = typer.Typer(
     help=(
         "Run small operator maintenance utilities.\n\n"
-        "Use maintenance backfill to upgrade older rows without rewriting existing history."
+        "Use maintenance backfill to upgrade older rows without rewriting existing history, "
+        "or maintenance mark-invalid-location --us-only to backfill the US-only guardrail."
     )
 )
 sources_app = typer.Typer(
@@ -467,6 +493,14 @@ def run_command(
         "--json",
         help="Print the final run summary as JSON.",
     ),
+    us_only: bool = typer.Option(
+        False,
+        "--us-only",
+        help=(
+            "Automatically mark obvious non-US jobs as invalid_location and keep them "
+            "out of the session flow. Ambiguous locations such as bare 'Remote' stay eligible."
+        ),
+    ),
 ) -> None:
     """Preferred operator entrypoint: discover, collect/import, and start one ready-to-apply session."""
     settings, paths = _load_runtime()
@@ -485,6 +519,7 @@ def run_command(
             executor_mode=executor,
             capture_search_artifacts=capture_search_artifacts,
             use_registry=use_registry,
+            us_only=us_only,
         )
     except DiscoverSearchWorkflowError as exc:
         typer.echo(render_run_discover_failure_report(paths, exc.discover_run))
@@ -656,13 +691,17 @@ def fast_apply(
 
 @app.command("open")
 def open_command(
-    manifest: Path = typer.Option(
-        ...,
+    reference: str | None = typer.Argument(
+        None,
+        help="Direct single-job reference: job_id or apply_url.",
+    ),
+    manifest: Path | None = typer.Option(
+        None,
         "--manifest",
         help="Path to any JSON session manifest created by jobs-ai.",
     ),
-    index: int = typer.Option(
-        ...,
+    index: int | None = typer.Option(
+        None,
         "--index",
         help="1-based manifest index to open.",
     ),
@@ -675,11 +714,43 @@ def open_command(
         ),
     ),
 ) -> None:
-    """Open one manifest item's apply URL, then optionally record applied/skipped."""
+    """Open one manifest item, or open a single job by job_id/apply_url."""
     settings, paths = _load_runtime()
     del settings
     ensure_workspace(paths)
     initialize_schema(paths.database_path)
+    if reference is not None:
+        if manifest is not None or index is not None:
+            typer.echo(
+                render_job_reference_open_error_report(
+                    paths,
+                    reference,
+                    "provide either a direct reference or --manifest/--index, not both",
+                )
+            )
+            raise typer.Exit(code=1)
+        try:
+            result = open_job_reference(
+                paths.database_path,
+                reference,
+                executor_mode=executor,
+            )
+        except ValueError as exc:
+            typer.echo(render_job_reference_open_error_report(paths, reference, str(exc)))
+            raise typer.Exit(code=1)
+        typer.echo(render_job_reference_open_report(paths, result))
+        return
+
+    if manifest is None or index is None:
+        typer.echo(
+            render_job_reference_open_error_report(
+                paths,
+                "<missing reference>",
+                "provide either <job_id|apply_url> or both --manifest and --index",
+            )
+        )
+        raise typer.Exit(code=1)
+
     try:
         open_result = open_manifest_item(
             manifest,
@@ -714,6 +785,172 @@ def status() -> None:
     """Show the local control tower status."""
     settings, paths = _load_runtime()
     typer.echo(render_status_report(settings, paths))
+
+
+@app.command("check-url")
+def check_url(
+    apply_url: str = typer.Argument(
+        ...,
+        help="Exact job apply URL to look up in the active database backend.",
+    ),
+    inspect: bool = typer.Option(
+        False,
+        "--inspect",
+        help="Show an enriched inspect view for every exact apply_url match.",
+    ),
+) -> None:
+    """Check whether an exact apply URL already exists in the jobs table."""
+    settings, paths = _load_runtime()
+    runtime = resolve_database_runtime(paths.database_path, settings=settings)
+    ensure_workspace(paths)
+    try:
+        if inspect:
+            result = find_jobs_by_apply_url_inspect(paths.database_path, apply_url)
+        else:
+            result = find_jobs_by_apply_url(paths.database_path, apply_url)
+    except Exception as exc:
+        typer.echo(
+            render_check_url_error_report(
+                backend=runtime.backend,
+                target_label=runtime.target_label,
+                apply_url=apply_url,
+                error=str(exc),
+            )
+        )
+        raise typer.Exit(code=1)
+    if inspect:
+        typer.echo(render_check_url_inspect_report(result))
+    else:
+        typer.echo(render_check_url_report(result))
+
+
+@app.command("apply-url")
+def apply_url_command(
+    apply_url: str = typer.Argument(
+        ...,
+        help=(
+            "Mark a job as applied using its apply URL. Automatically resolves "
+            "when only one match exists."
+        ),
+    ),
+    job_id: int | None = typer.Option(
+        None,
+        "--job-id",
+        min=1,
+        help="Explicit job ID to mark when the URL matches multiple jobs.",
+    ),
+) -> None:
+    """Mark a job as applied using its apply URL. Automatically resolves when only one match exists."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    try:
+        lookup_result = find_jobs_by_apply_url_inspect(paths.database_path, apply_url)
+    except Exception as exc:
+        typer.echo(render_apply_url_error_report(apply_url=apply_url, error=str(exc)))
+        raise typer.Exit(code=1)
+
+    if not lookup_result.matches:
+        typer.echo(render_apply_url_no_match_report(lookup_result.apply_url))
+        raise typer.Exit(code=1)
+
+    if job_id is None:
+        if len(lookup_result.matches) > 1:
+            typer.echo(render_apply_url_multiple_matches_report(lookup_result))
+            raise typer.Exit(code=1)
+        selected_match = lookup_result.matches[0]
+    else:
+        selected_match = next(
+            (match for match in lookup_result.matches if match.job_id == job_id),
+            None,
+        )
+        if selected_match is None:
+            if len(lookup_result.matches) > 1:
+                typer.echo(
+                    render_apply_url_multiple_matches_report(
+                        lookup_result,
+                        error=f"job id {job_id} is not one of the matches for this apply_url",
+                    )
+                )
+            else:
+                typer.echo(
+                    render_apply_url_error_report(
+                        apply_url=lookup_result.apply_url,
+                        job_id=job_id,
+                        error="job id is not one of the matches for this apply_url",
+                    )
+                )
+            raise typer.Exit(code=1)
+
+    try:
+        mark_result = mark_session_jobs(
+            paths.database_path,
+            status="applied",
+            job_ids=(selected_match.job_id,),
+        )
+    except ValueError as exc:
+        typer.echo(
+            render_apply_url_error_report(
+                apply_url=lookup_result.apply_url,
+                job_id=selected_match.job_id,
+                error=str(exc),
+            )
+        )
+        raise typer.Exit(code=1)
+
+    if mark_result.updated:
+        typer.echo(render_apply_url_mark_report(mark_result.updated[0]))
+        return
+
+    if mark_result.skipped:
+        issue = mark_result.skipped[0]
+        if issue.reason == "already applied":
+            typer.echo(
+                render_apply_url_already_applied_report(
+                    job_id=selected_match.job_id,
+                    company=selected_match.company,
+                    title=selected_match.title,
+                )
+            )
+            return
+        typer.echo(
+            render_apply_url_error_report(
+                apply_url=lookup_result.apply_url,
+                job_id=selected_match.job_id,
+                error=issue.reason,
+            )
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        render_apply_url_error_report(
+            apply_url=lookup_result.apply_url,
+            job_id=selected_match.job_id,
+            error="matched job was not updated",
+        )
+    )
+    raise typer.Exit(code=1)
+
+
+@app.command("inspect")
+def inspect_command(
+    reference: str = typer.Argument(
+        ...,
+        help="Direct single-job reference: job_id or apply_url.",
+    ),
+) -> None:
+    """Inspect a single job by job_id or apply_url without requiring a manifest."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    try:
+        result = inspect_job_reference(paths.database_path, reference)
+    except ValueError as exc:
+        typer.echo(render_job_reference_inspect_error_report(paths, reference, str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_job_reference_inspect_report(paths, result))
 
 
 @app.command()
@@ -1959,6 +2196,65 @@ def maintenance_backfill(
     typer.echo(render_maintenance_backfill_report(paths, result))
 
 
+@maintenance_app.command("supersede-duplicates")
+def maintenance_supersede_duplicates(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview canonical apply URL duplicate repairs without modifying statuses.",
+    ),
+) -> None:
+    """Choose one canonical row per canonical apply URL and mark sibling rows as superseded."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = repair_canonical_duplicate_statuses(
+            paths.database_path,
+            dry_run=dry_run,
+        )
+    except ValueError as exc:
+        typer.echo(render_maintenance_canonical_duplicates_error_report(paths, str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_maintenance_canonical_duplicates_report(paths, result))
+
+
+@maintenance_app.command("mark-invalid-location")
+def maintenance_mark_invalid_location(
+    us_only: bool = typer.Option(
+        False,
+        "--us-only",
+        help="Apply the current US-only location policy when classifying existing jobs.",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        min=1,
+        help="Optional cap on how many obvious non-US jobs to mark in one run.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview obvious non-US jobs without modifying tracked statuses.",
+    ),
+) -> None:
+    """Classify existing jobs and mark obvious non-US rows as invalid_location."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    try:
+        result = mark_invalid_location_jobs(
+            paths.database_path,
+            us_only=us_only,
+            limit=limit,
+            dry_run=dry_run,
+        )
+    except ValueError as exc:
+        typer.echo(render_maintenance_invalid_location_error_report(paths, str(exc)))
+        raise typer.Exit(code=1)
+    typer.echo(render_maintenance_invalid_location_report(paths, result))
+
+
 @session_app.command("recent")
 def session_recent(
     limit: int = typer.Option(
@@ -2417,25 +2713,199 @@ def portal_hint(
     )
 
 
-@track_app.command("mark")
-def track_mark(
-    job_id: int = typer.Argument(..., min=1, help="Job id from the jobs table."),
-    status: str = typer.Argument(
-        ...,
-        help=f"Manual application status: {', '.join(APPLICATION_STATUSES)}.",
-    ),
+def _parse_track_mark_targets(
+    values: Sequence[str],
+) -> tuple[str, tuple[int, ...], str | None]:
+    if len(values) < 2:
+        raise ValueError("provide either STATUS JOB_ID... or JOB_ID/APPLY_URL STATUS")
+
+    first_value = values[0].strip().lower()
+    if first_value in APPLICATION_STATUSES:
+        if len(values) < 2:
+            raise ValueError("provide at least one job id after the requested status")
+        return values[0], tuple(_parse_track_mark_job_id(value) for value in values[1:]), None
+
+    if len(values) != 2:
+        raise ValueError(
+            "legacy track mark syntax supports exactly one job id or apply_url; use STATUS JOB_ID... for bulk updates"
+        )
+    reference = values[0].strip()
+    if _looks_like_track_mark_url(reference):
+        return values[1], (), reference
+    return values[1], (_parse_track_mark_job_id(reference),), None
+
+
+def _looks_like_track_mark_url(value: str) -> bool:
+    normalized_value = value.strip().lower()
+    return normalized_value.startswith("http://") or normalized_value.startswith("https://")
+
+
+def _parse_track_mark_job_id(value: str) -> int:
+    try:
+        job_id = int(value)
+    except ValueError as exc:
+        raise ValueError(f"job id '{value}' is not a valid integer") from exc
+    if job_id < 1:
+        raise ValueError(f"job id '{value}' must be at least 1")
+    return job_id
+
+
+def _normalize_reference_mark_error(reference: str, error: str) -> str:
+    if error.startswith("no job matched apply_url "):
+        return f"no jobs found for URL: {reference}"
+    return error
+
+
+def _resolve_reference_mark_targets(database_path: Path, reference: str):
+    resolution = resolve_job_reference(database_path, reference)
+    if resolution.reference_kind == "apply_url":
+        return resolution, resolution.matched_rows, resolution.preferred_row
+    return resolution, (resolution.selected_row,), resolution.selected_row
+
+
+def _mark_status_for_reference(
+    database_path: Path,
+    reference: str,
+    *,
+    status: str,
+    resolve_duplicates_for_job_id: bool = False,
+):
+    normalized_status = normalize_application_status(status)
+    resolution, target_rows, preferred_row = _resolve_reference_mark_targets(
+        database_path,
+        reference,
+    )
+    result = record_application_statuses(
+        database_path,
+        job_ids=tuple(row.job_id for row in target_rows),
+        status=normalized_status,
+        resolve_duplicates=(
+            resolve_duplicates_for_job_id if resolution.reference_kind == "job_id" else False
+        ),
+    )
+    return resolution, target_rows, preferred_row, result
+
+
+def _reference_mark_succeeded(
+    result,
+    *,
+    success_if_all_skipped_reasons: Sequence[str] = (),
+) -> bool:
+    if result.updated:
+        return True
+    allowed_reasons = frozenset(success_if_all_skipped_reasons)
+    return bool(result.skipped) and bool(allowed_reasons) and all(
+        issue.reason in allowed_reasons for issue in result.skipped
+    )
+
+
+def _run_reference_mark_command(
+    reference: str,
+    *,
+    status: str,
+    command_label: str,
+    success_if_all_skipped_reasons: Sequence[str] = (),
+    resolve_duplicates_for_job_id: bool = False,
 ) -> None:
-    """Record a manual application status update for one job."""
     settings, paths = _load_runtime()
     del settings
     ensure_workspace(paths)
     initialize_schema(paths.database_path)
     try:
-        snapshot = record_application_status(paths.database_path, job_id=job_id, status=status)
+        resolution, target_rows, preferred_row, result = _mark_status_for_reference(
+            paths.database_path,
+            reference,
+            status=status,
+            resolve_duplicates_for_job_id=resolve_duplicates_for_job_id,
+        )
     except ValueError as exc:
-        typer.echo(render_application_tracking_error_report("mark", paths, str(exc)))
+        typer.echo(
+            render_job_reference_inspect_error_report(
+                paths,
+                reference,
+                _normalize_reference_mark_error(reference, str(exc)),
+                command_label=command_label,
+            )
+        )
         raise typer.Exit(code=1)
-    typer.echo(render_application_tracking_mark_report(paths, snapshot))
+    typer.echo(
+        render_application_tracking_reference_mark_report(
+            paths,
+            resolution,
+            result,
+            command_label=command_label,
+            matched_rows=target_rows,
+            preferred_row=preferred_row,
+            success_if_all_skipped_reasons=success_if_all_skipped_reasons,
+        )
+    )
+    if not _reference_mark_succeeded(
+        result,
+        success_if_all_skipped_reasons=success_if_all_skipped_reasons,
+    ):
+        raise typer.Exit(code=1)
+
+
+@track_app.command("mark")
+def track_mark(
+    mark_args: list[str] = typer.Argument(
+        ...,
+        metavar="STATUS/JOB_ID/APPLY_URL ...",
+        help=(
+            "Manual tracking update. Supports legacy JOB_ID/APPLY_URL STATUS or bulk STATUS JOB_ID... "
+            f"with statuses: {', '.join(APPLICATION_STATUSES)}."
+        ),
+    ),
+) -> None:
+    """Record a manual application status update for one or more jobs."""
+    settings, paths = _load_runtime()
+    del settings
+    ensure_workspace(paths)
+    initialize_schema(paths.database_path)
+    url_reference: str | None = None
+    try:
+        status, job_ids, url_reference = _parse_track_mark_targets(mark_args)
+        status = normalize_application_status(status)
+        if url_reference is not None:
+            resolution, target_rows, preferred_row, result = _mark_status_for_reference(
+                paths.database_path,
+                url_reference,
+                status=status,
+            )
+            typer.echo(
+                render_application_tracking_reference_mark_report(
+                    paths,
+                    resolution,
+                    result,
+                    matched_rows=target_rows,
+                    preferred_row=preferred_row,
+                )
+            )
+            if not _reference_mark_succeeded(result):
+                raise typer.Exit(code=1)
+            return
+        if len(job_ids) == 1:
+            snapshot = record_application_status(
+                paths.database_path,
+                job_id=job_ids[0],
+                status=status,
+            )
+            typer.echo(render_application_tracking_mark_report(paths, snapshot))
+            return
+        result = record_application_statuses(
+            paths.database_path,
+            job_ids=job_ids,
+            status=status,
+        )
+    except ValueError as exc:
+        error = str(exc)
+        if url_reference is not None and error.startswith("no job matched apply_url "):
+            error = _normalize_reference_mark_error(url_reference, error)
+        typer.echo(render_application_tracking_error_report("mark", paths, error))
+        raise typer.Exit(code=1)
+    typer.echo(render_application_tracking_batch_mark_report(paths, result))
+    if not result.updated:
+        raise typer.Exit(code=1)
 
 
 def _run_track_list(status: str | None) -> None:
@@ -2452,9 +2922,36 @@ def _run_track_list(status: str | None) -> None:
 
 
 @app.command("applied")
-def applied() -> None:
-    """Shortcut for viewing jobs currently tracked as applied."""
-    _run_track_list(status="applied")
+def applied(
+    reference: str = typer.Argument(
+        ...,
+        help="Direct job reference: numeric job_id or absolute apply_url.",
+    ),
+) -> None:
+    """Mark one job or one apply_url cluster as applied."""
+    _run_reference_mark_command(
+        reference,
+        status="applied",
+        command_label="jobs_ai applied",
+        success_if_all_skipped_reasons=("already applied",),
+        resolve_duplicates_for_job_id=True,
+    )
+
+
+@app.command("invalid-location")
+def invalid_location(
+    reference: str = typer.Argument(
+        ...,
+        help="Direct job reference: numeric job_id or absolute apply_url.",
+    ),
+) -> None:
+    """Mark one job or one apply_url cluster as invalid_location."""
+    _run_reference_mark_command(
+        reference,
+        status="invalid_location",
+        command_label="jobs_ai invalid-location",
+        success_if_all_skipped_reasons=("already invalid_location",),
+    )
 
 
 @track_app.command("list")

@@ -31,12 +31,14 @@ def select_launch_preview(
     limit: int | None = None,
     ingest_batch_id: str | None = None,
     query_text: str | None = None,
+    us_only: bool = False,
 ) -> tuple[LaunchPreview, ...]:
     recommendations = select_queue_recommendations(
         database_path,
         limit=limit,
         ingest_batch_id=ingest_batch_id,
         query_text=query_text,
+        us_only=us_only,
     )
     return tuple(_preview_from_recommendation(recommendation) for recommendation in recommendations)
 

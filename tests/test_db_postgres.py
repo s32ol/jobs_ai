@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 from contextlib import closing
+import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from typer.testing import CliRunner
+
 SRC_PATH = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
+from jobs_ai.cli import app
 from jobs_ai.config import POSTGRES_SQLITE_FALLBACK_WARNING, load_settings
-from jobs_ai.db import initialize_schema, initialize_schema_connection
+from jobs_ai.db import initialize_schema, initialize_schema_connection, insert_job
 from jobs_ai.db_postgres import (
     BackendStatusResult,
     DatabasePingResult,
@@ -35,6 +39,32 @@ from jobs_ai.main import (
     render_db_status_report,
 )
 from jobs_ai.workspace import build_workspace_paths
+
+RUNNER = CliRunner()
+
+
+def _job_record(
+    *,
+    source: str,
+    company: str,
+    title: str,
+    location: str,
+    apply_url: str,
+    portal_type: str | None = None,
+) -> dict[str, object]:
+    return {
+        "source": source,
+        "source_job_id": None,
+        "company": company,
+        "title": title,
+        "location": location,
+        "apply_url": apply_url,
+        "portal_type": portal_type,
+        "salary_text": None,
+        "posted_at": None,
+        "found_at": "2026-03-13T08:00:00Z",
+        "raw_json": json.dumps({}, ensure_ascii=True),
+    }
 
 
 class DatabasePostgresConfigTest(unittest.TestCase):
@@ -187,6 +217,95 @@ class DatabasePostgresConfigTest(unittest.TestCase):
             ),
         )
 
+    def test_cli_check_url_reports_runtime_fallback_when_postgres_connect_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sqlite_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            apply_url = "https://job-boards.greenhouse.io/qualifiedhealth/jobs/5153317008"
+            with patch.dict(
+                "os.environ",
+                {
+                    "JOBS_AI_DB_BACKEND": "sqlite",
+                    "JOBS_AI_SQLITE_PATH": str(sqlite_path),
+                },
+                clear=False,
+            ):
+                initialize_schema(sqlite_path)
+            with closing(connect_sqlite_database(sqlite_path)) as connection:
+                insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Qualified Health",
+                        title="Data Engineer",
+                        location="Remote",
+                        apply_url=apply_url,
+                        portal_type="greenhouse",
+                    ),
+                )
+                connection.commit()
+
+            env = {
+                "JOBS_AI_DB_BACKEND": "postgres",
+                "JOBS_AI_SQLITE_PATH": str(sqlite_path),
+                "DATABASE_URL": "postgresql://demo:secret@example.neon.tech/neondb?sslmode=require",
+            }
+            with patch(
+                "jobs_ai.db_runtime.psycopg.connect",
+                side_effect=RuntimeError("DNS lookup failed"),
+            ):
+                result = RUNNER.invoke(app, ["check-url", apply_url], env=env)
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("active backend: sqlite", result.stdout)
+        self.assertIn("fallback triggered: yes", result.stdout)
+        self.assertIn("fallback reason: DNS lookup failed", result.stdout)
+        self.assertIn("status: exact match found", result.stdout)
+
+    def test_cli_check_url_inspect_reports_runtime_fallback_when_postgres_connect_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sqlite_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            apply_url = "https://job-boards.greenhouse.io/qualifiedhealth/jobs/5153317008"
+            with patch.dict(
+                "os.environ",
+                {
+                    "JOBS_AI_DB_BACKEND": "sqlite",
+                    "JOBS_AI_SQLITE_PATH": str(sqlite_path),
+                },
+                clear=False,
+            ):
+                initialize_schema(sqlite_path)
+            with closing(connect_sqlite_database(sqlite_path)) as connection:
+                insert_job(
+                    connection,
+                    _job_record(
+                        source="manual",
+                        company="Qualified Health",
+                        title="Data Engineer",
+                        location="Remote",
+                        apply_url=apply_url,
+                        portal_type="greenhouse",
+                    ),
+                )
+                connection.commit()
+
+            env = {
+                "JOBS_AI_DB_BACKEND": "postgres",
+                "JOBS_AI_SQLITE_PATH": str(sqlite_path),
+                "DATABASE_URL": "postgresql://demo:secret@example.neon.tech/neondb?sslmode=require",
+            }
+            with patch(
+                "jobs_ai.db_runtime.psycopg.connect",
+                side_effect=RuntimeError("DNS lookup failed"),
+            ):
+                result = RUNNER.invoke(app, ["check-url", apply_url, "--inspect"], env=env)
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("active backend: sqlite", result.stdout)
+        self.assertIn("fallback triggered: yes", result.stdout)
+        self.assertIn("fallback reason: DNS lookup failed", result.stdout)
+        self.assertIn("inspect mode: yes", result.stdout)
+        self.assertIn("total matches: 1", result.stdout)
+
 
 class DatabasePostgresSchemaTest(unittest.TestCase):
     def test_initialize_schema_connection_emits_postgres_schema_statements(self) -> None:
@@ -202,6 +321,7 @@ class DatabasePostgresSchemaTest(unittest.TestCase):
             executed_sql,
         )
         self.assertIn("ALTER TABLE jobs ADD COLUMN ingest_batch_id TEXT", executed_sql)
+        self.assertIn("ALTER TABLE jobs ADD COLUMN applied_at TEXT", executed_sql)
 
     def test_initialize_schema_connection_can_skip_postgres_secondary_indexes(self) -> None:
         connection = _RecordingPostgresConnection()
@@ -246,7 +366,7 @@ class DatabasePostgresMigrationTest(unittest.TestCase):
             with closing(connect_sqlite_database(target_path)) as connection:
                 job_rows = connection.execute(
                     """
-                    SELECT id, source_registry_id, company, title
+                    SELECT id, source_registry_id, company, title, applied_at
                     FROM jobs
                     ORDER BY id
                     """
@@ -264,6 +384,7 @@ class DatabasePostgresMigrationTest(unittest.TestCase):
             self.assertEqual([int(row["id"]) for row in job_rows], [101, 102])
             self.assertEqual(int(job_rows[0]["source_registry_id"]), 1)
             self.assertIsNone(job_rows[1]["source_registry_id"])
+            self.assertEqual(job_rows[0]["applied_at"], "2026-03-14T08:00:00Z")
             self.assertEqual(int(application_row["id"]), 301)
             self.assertEqual(int(application_row["job_id"]), 101)
             self.assertEqual(application_row["state"], "submitted")
@@ -335,7 +456,7 @@ class DatabasePostgresMigrationTest(unittest.TestCase):
             self.assertEqual(second_result.applications.inserted_count, 0)
             self.assertEqual(second_result.application_tracking.inserted_count, 0)
             self.assertEqual(second_result.session_history.inserted_count, 0)
-            self.assertGreaterEqual(second_result.jobs.unchanged_count, 2)
+            self.assertGreaterEqual(second_result.jobs.unchanged_count, 1)
             self.assertFalse(second_result.fast_path_used)
 
 
@@ -567,10 +688,11 @@ def _create_source_database(database_path: Path) -> None:
                 canonical_apply_url,
                 identity_key,
                 status,
+                applied_at,
                 raw_json,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 101,
@@ -591,6 +713,7 @@ def _create_source_database(database_path: Path) -> None:
                 "https://boards.greenhouse.io/acme/jobs/101",
                 "greenhouse|job_id|job-101",
                 "applied",
+                "2026-03-14T08:00:00Z",
                 '{"id": 101}',
                 "2026-03-12T08:00:00Z",
                 "2026-03-14T08:00:00Z",

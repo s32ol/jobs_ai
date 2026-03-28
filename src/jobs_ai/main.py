@@ -12,6 +12,7 @@ from .discover.models import DiscoverRun, DiscoverRunReport
 from .source_seed.models import SourceSeedRunReport
 from .application_tracking import (
     APPLICATION_STATUSES,
+    ApplicationStatusBatchResult,
     ApplicationStatusDetail,
     ApplicationStatusSnapshot,
 )
@@ -19,10 +20,16 @@ from .application_assist import ApplicationAssist
 from .application_log import ApplicationLogResult
 from .application_prefill import ApplicationPrefillResult
 from .config import GEOGRAPHY_PRIORITY, SEARCH_PRIORITY, TARGET_ROLES, Settings
-from .db import REQUIRED_TABLES, SessionHistoryEntry
+from .db import ApplyUrlInspectResult, ApplyUrlLookupResult, REQUIRED_TABLES, SessionHistoryEntry
 from .db_merge import DatabaseMergeResult, DatabaseSchemaAssessment
 from .db_postgres import BackendStatusResult, DatabasePingResult, PostgresMigrationResult
 from .db_runtime import resolve_database_runtime
+from .job_reference import (
+    JobReferenceInspectResult,
+    JobReferenceOpenResult,
+    JobReferenceResolution,
+    JobReferenceRow,
+)
 from .launch_dry_run import LaunchDryRunStep
 from .launch_executor import (
     LaunchExecutionReport,
@@ -32,7 +39,11 @@ from .launch_executor import (
     REMOTE_PRINT_EXECUTOR_MODE,
     SKIPPED_MISSING_URL_EXECUTION_STATUS,
 )
-from .maintenance import BackfillResult
+from .maintenance import (
+    BackfillResult,
+    CanonicalDuplicateRepairResult,
+    InvalidLocationMarkResult,
+)
 from .jobs.importer import JobImportResult
 from .jobs.fast_apply import FastApplySelection
 from .launch_plan import LaunchPlan
@@ -250,6 +261,317 @@ def render_status_report(settings: Settings, paths: WorkspacePaths) -> str:
             'tip: preferred daily entrypoint is jobs-ai run "python backend engineer remote".',
         ]
     )
+
+
+def render_check_url_report(result: ApplyUrlLookupResult) -> str:
+    match_count = len(result.matches)
+    lines = [
+        "jobs_ai check-url",
+        f"active backend: {result.backend}",
+        f"fallback triggered: {'yes' if result.fallback_triggered else 'no'}",
+        (
+            f"fallback reason: {result.fallback_reason}"
+            if result.fallback_reason is not None
+            else "fallback reason: n/a"
+        ),
+        f"database target: {result.target_label}",
+        (
+            "status: exact match found"
+            if match_count
+            else "status: no job found for exact apply_url"
+        ),
+        f"apply_url: {result.apply_url}",
+    ]
+    if not match_count:
+        return "\n".join(lines)
+
+    lines.append(f"exact matches: {match_count}")
+    for index, match in enumerate(result.matches, start=1):
+        lines.append("")
+        if match_count > 1:
+            lines.append(f"match {index}:")
+        lines.extend(
+            (
+                f"job id: {match.job_id}",
+                f"company: {match.company}",
+                f"title: {match.title}",
+                f"apply_url: {match.apply_url}",
+                f"status: {match.status}",
+                f"portal_type: {match.portal_type or 'n/a'}",
+            )
+    )
+    return "\n".join(lines)
+
+
+def render_check_url_inspect_report(result: ApplyUrlInspectResult) -> str:
+    match_count = len(result.matches)
+    lines = [
+        "jobs_ai check-url",
+        f"active backend: {result.backend}",
+        f"fallback triggered: {'yes' if result.fallback_triggered else 'no'}",
+        (
+            f"fallback reason: {result.fallback_reason}"
+            if result.fallback_reason is not None
+            else "fallback reason: n/a"
+        ),
+        f"database target: {result.target_label}",
+        (
+            "status: exact match found (inspect mode)"
+            if match_count
+            else "status: no job found for exact apply_url"
+        ),
+        f"apply_url: {result.apply_url}",
+        "inspect mode: yes",
+    ]
+    if not match_count:
+        return "\n".join(lines)
+
+    lines.extend(
+        (
+            f"total matches: {match_count}",
+            f"canonical/preferred row: {result.preferred_job_id or 'n/a'}",
+            f"sibling duplicates: {_format_check_url_job_ids(result.sibling_job_ids)}",
+            f"effective state for this url: {result.effective_state or 'n/a'}",
+            f"url already handled: {'yes' if result.url_already_handled else 'no'}",
+            f"rows already opened: {_format_check_url_job_ids(result.opened_job_ids)}",
+            f"rows already applied: {_format_check_url_job_ids(result.applied_job_ids)}",
+            f"rows already rejected: {_format_check_url_job_ids(result.rejected_job_ids)}",
+        )
+    )
+
+    for index, match in enumerate(result.matches, start=1):
+        lines.append("")
+        if match_count > 1:
+            lines.append(f"match {index}:")
+        lines.extend(
+            (
+                f"job id: {match.job_id}",
+                f"preferred row: {'yes' if match.job_id == result.preferred_job_id else 'no'}",
+                f"company: {match.company}",
+                f"title: {match.title}",
+                f"location: {match.location or 'n/a'}",
+                f"status: {match.status}",
+                f"effective status: {match.resolved_status}",
+                f"portal_type: {match.portal_type or 'n/a'}",
+                f"source: {match.source}",
+                f"apply_url: {match.apply_url}",
+                f"canonical_apply_url: {match.canonical_apply_url or 'n/a'}",
+                f"identity_key: {match.identity_key or 'n/a'}",
+                (
+                    "actionable in normal queue/session flow: "
+                    f"{'yes' if match.actionable else 'no'}"
+                ),
+                f"launchable: {'yes' if match.launchable else 'no'}",
+                (
+                    f"warnings: {'; '.join(match.warnings)}"
+                    if match.warnings
+                    else "warnings: none"
+                ),
+                (
+                    "recommended resume variant: "
+                    f"{_format_check_url_selection(match.recommended_resume_variant_key, match.recommended_resume_variant_label)}"
+                ),
+                (
+                    "recommended profile snippet: "
+                    f"{_format_check_url_selection(match.recommended_profile_snippet_key, match.recommended_profile_snippet_label)}"
+                ),
+                (
+                    "recommended profile snippet text: "
+                    f"{match.recommended_profile_snippet_text or 'n/a'}"
+                ),
+            )
+        )
+    return "\n".join(lines)
+
+
+def render_check_url_error_report(
+    *,
+    backend: str,
+    target_label: str,
+    apply_url: str,
+    error: str,
+) -> str:
+    return "\n".join(
+        [
+            "jobs_ai check-url",
+            f"active backend: {backend}",
+            f"database target: {target_label}",
+            "status: failed",
+            f"apply_url: {apply_url}",
+            f"error: {error}",
+        ]
+    )
+
+
+def render_apply_url_mark_report(snapshot: ApplicationStatusSnapshot) -> str:
+    return "\n".join(
+        [
+            "status: applied",
+            f"job id: {snapshot.job_id}",
+            f"company: {snapshot.company}",
+            f"title: {snapshot.title}",
+        ]
+    )
+
+
+def render_apply_url_already_applied_report(
+    *,
+    job_id: int,
+    company: str,
+    title: str,
+) -> str:
+    return "\n".join(
+        [
+            "status: already applied",
+            f"job id: {job_id}",
+            f"company: {company}",
+            f"title: {title}",
+        ]
+    )
+
+
+def render_apply_url_multiple_matches_report(
+    result: ApplyUrlInspectResult,
+    *,
+    error: str | None = None,
+) -> str:
+    lines = [
+        "status: multiple matches found",
+    ]
+    if error is not None:
+        lines.append(f"error: {error}")
+    lines.append("matches:")
+    lines.extend(
+        f"  - job id: {match.job_id} | {match.company} | {match.title}"
+        for match in result.matches
+    )
+    if result.matches:
+        lines.extend(
+            [
+                "next:",
+                f"  jobs-ai apply-url {result.apply_url} --job-id <id>",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_apply_url_no_match_report(apply_url: str) -> str:
+    return "\n".join(
+        [
+            "status: no matches found",
+            f"apply_url: {apply_url}",
+        ]
+    )
+
+
+def render_apply_url_error_report(
+    *,
+    apply_url: str,
+    error: str,
+    job_id: int | None = None,
+) -> str:
+    lines = [
+        "status: failed",
+        f"apply_url: {apply_url}",
+    ]
+    if job_id is not None:
+        lines.append(f"job id: {job_id}")
+    lines.append(f"error: {error}")
+    return "\n".join(lines)
+
+
+def render_job_reference_inspect_report(
+    paths: WorkspacePaths,
+    result: JobReferenceInspectResult,
+    *,
+    command_label: str = "jobs_ai inspect",
+) -> str:
+    resolution = result.resolution
+    selected_row = resolution.selected_row
+    recommendation = result.recommendation
+    lines = [
+        command_label,
+        f"database path: {paths.database_path}",
+        f"reference: {resolution.reference_text}",
+        f"reference kind: {resolution.reference_kind}",
+        "status: success",
+        f"job id: {selected_row.job_id}",
+        f"company: {selected_row.company}",
+        f"title: {selected_row.title}",
+        f"location: {selected_row.location or 'location missing'}",
+        f"job status: {selected_row.status}",
+        f"portal_type: {selected_row.portal_type or 'n/a'}",
+        f"source: {selected_row.source}",
+        f"apply_url: {selected_row.apply_url or 'apply_url missing'}",
+        f"canonical_apply_url: {selected_row.canonical_apply_url or 'n/a'}",
+        f"identity_key: {selected_row.identity_key or 'n/a'}",
+        f"actionable in queue/session flow: {'yes' if result.actionable else 'no'}",
+        f"launchable: {'yes' if result.launchable else 'no'}",
+        f"warnings: {'; '.join(result.warnings) if result.warnings else 'none'}",
+        f"skip reasons: {'; '.join(result.skip_reasons) if result.skip_reasons else 'none'}",
+        (
+            f"recommended resume variant: {recommendation.resume_variant_key} "
+            f"({recommendation.resume_variant_label})"
+        ),
+        (
+            f"recommended profile snippet: {recommendation.snippet_key} "
+            f"({recommendation.snippet_label})"
+        ),
+        f"profile snippet text: {recommendation.snippet_text}",
+    ]
+    if resolution.reference_kind == "apply_url":
+        lines.insert(4, f"normalized apply_url: {resolution.normalized_apply_url}")
+        if (
+            resolution.canonical_lookup_url is not None
+            and resolution.canonical_lookup_url != resolution.normalized_apply_url
+        ):
+            lines.insert(5, f"canonical lookup url: {resolution.canonical_lookup_url}")
+
+    if len(resolution.matched_rows) > 1:
+        lines.extend(
+            [
+                f"matched rows: {len(resolution.matched_rows)}",
+                f"preferred row: {_format_job_reference_row(resolution.preferred_row)}",
+            ]
+        )
+        if resolution.preferred_row.job_id != selected_row.job_id:
+            lines.append("selected row differs from preferred row: yes")
+        if resolution.sibling_rows:
+            lines.append("sibling duplicates:")
+            lines.extend(
+                f"- {_format_job_reference_row(row)}" for row in resolution.sibling_rows
+            )
+    return "\n".join(lines)
+
+
+def render_job_reference_inspect_error_report(
+    paths: WorkspacePaths,
+    reference: str,
+    error: str,
+    *,
+    command_label: str = "jobs_ai inspect",
+) -> str:
+    return "\n".join(
+        [
+            command_label,
+            f"database path: {paths.database_path}",
+            f"reference: {reference}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
+def _format_check_url_selection(key: str | None, label: str | None) -> str:
+    if key is None or label is None:
+        return "n/a"
+    return f"{key} ({label})"
+
+
+def _format_check_url_job_ids(job_ids: Sequence[int]) -> str:
+    if not job_ids:
+        return "none"
+    return ", ".join(str(job_id) for job_id in job_ids)
 
 
 def render_init_report(paths: WorkspacePaths, created_paths: Sequence[Path]) -> str:
@@ -657,6 +979,118 @@ def render_maintenance_backfill_error_report(paths: WorkspacePaths, error: str) 
     )
 
 
+def render_maintenance_invalid_location_report(
+    paths: WorkspacePaths,
+    result: InvalidLocationMarkResult,
+) -> str:
+    action_label = "would mark" if result.dry_run else "marked"
+    lines = [
+        "jobs_ai maintenance mark-invalid-location",
+        f"database path: {paths.database_path}",
+        f"policy: {'us-only' if result.us_only else 'custom'}",
+        f"dry run: {'yes' if result.dry_run else 'no'}",
+        f"limit: {result.limit if result.limit is not None else 'none'}",
+        f"ingest batch id: {result.ingest_batch_id or 'none'}",
+        f"query: {result.query_text or 'none'}",
+        f"jobs inspected: {result.total_jobs}",
+        f"obvious non-US jobs: {result.candidate_jobs}",
+        f"{action_label} jobs: {result.marked_jobs}",
+        f"deferred by limit: {result.deferred_jobs}",
+        f"already invalid_location: {result.already_invalid_jobs}",
+        f"ambiguous jobs left unchanged: {result.ambiguous_jobs}",
+        f"US-allowed jobs: {result.us_allowed_jobs}",
+        f"skipped jobs: {result.skipped_jobs}",
+        (
+            "status: success"
+            if result.total_jobs
+            else "status: no matching jobs found"
+        ),
+    ]
+    if result.job_updates:
+        lines.append("job updates:")
+        lines.extend(
+            (
+                f"- [job {entry.job_id}] {entry.company} | {entry.title} | "
+                f"{entry.location or 'location missing'} | previous={entry.previous_status} | "
+                f"reason={entry.classification_reason}"
+            )
+            for entry in result.job_updates
+        )
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("queue"),
+            _cli_example("track list --status invalid_location"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_maintenance_invalid_location_error_report(
+    paths: WorkspacePaths,
+    error: str,
+) -> str:
+    return "\n".join(
+        [
+            "jobs_ai maintenance mark-invalid-location",
+            f"database path: {paths.database_path}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
+def render_maintenance_canonical_duplicates_report(
+    paths: WorkspacePaths,
+    result: CanonicalDuplicateRepairResult,
+) -> str:
+    action_label = "would repair" if result.dry_run else "repaired"
+    lines = [
+        "jobs_ai maintenance supersede-duplicates",
+        f"database path: {paths.database_path}",
+        f"dry run: {'yes' if result.dry_run else 'no'}",
+        f"duplicate groups: {result.duplicate_groups}",
+        f"{action_label} groups: {result.repaired_groups}",
+        f"changed jobs: {result.changed_jobs}",
+        f"rows marked superseded: {result.superseded_jobs}",
+        f"canonical rows restored: {result.reactivated_jobs}",
+        f"status: {'success' if result.duplicate_groups else 'no canonical-url duplicates found'}",
+    ]
+    if result.groups:
+        lines.append("groups:")
+        lines.extend(
+            (
+                f"- winner [job {group.winner_job_id}] status={group.winner_status} | "
+                f"duplicates={len(group.superseded_job_ids)} | {group.canonical_apply_url}"
+            )
+            for group in result.groups
+        )
+    _append_guidance(
+        lines,
+        "next:",
+        (
+            _cli_example("queue"),
+            _cli_example("session start --limit 10"),
+        ),
+    )
+    return "\n".join(lines)
+
+
+def render_maintenance_canonical_duplicates_error_report(
+    paths: WorkspacePaths,
+    error: str,
+) -> str:
+    return "\n".join(
+        [
+            "jobs_ai maintenance supersede-duplicates",
+            f"database path: {paths.database_path}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
 def render_import_report(
     paths: WorkspacePaths,
     input_path: Path,
@@ -669,6 +1103,8 @@ def render_import_report(
         f"batch id: {result.batch_id or 'none'}",
         f"inserted: {result.inserted_count}",
         f"duplicates skipped: {result.duplicate_count}",
+        f"canonical duplicate groups resolved: {result.canonical_duplicate_groups_resolved}",
+        f"rows marked superseded: {result.superseded_count}",
         f"invalid records: {result.error_count}",
         f"skipped: {result.skipped_count}",
     ]
@@ -2478,6 +2914,64 @@ def render_open_error_report(
     )
 
 
+def render_job_reference_open_report(
+    paths: WorkspacePaths,
+    result: JobReferenceOpenResult,
+) -> str:
+    resolution = result.resolution
+    selected_row = resolution.selected_row
+    lines = [
+        "jobs_ai open",
+        f"database path: {paths.database_path}",
+        f"reference: {resolution.reference_text}",
+        f"reference kind: {resolution.reference_kind}",
+        f"status: {_format_launch_execution_status(result.execution_report.status)}",
+        f"resolved job id: {selected_row.job_id}",
+        f"resolved job: {_format_job_reference_row(selected_row, include_status=False)}",
+        f"apply_url: {result.execution_report.apply_url}",
+        f"canonical_apply_url: {selected_row.canonical_apply_url or 'n/a'}",
+        f"portal_type: {selected_row.portal_type or 'n/a'}",
+    ]
+    if resolution.reference_kind == "apply_url":
+        lines.insert(4, f"normalized apply_url: {resolution.normalized_apply_url}")
+        if (
+            resolution.canonical_lookup_url is not None
+            and resolution.canonical_lookup_url != resolution.normalized_apply_url
+        ):
+            lines.insert(5, f"canonical lookup url: {resolution.canonical_lookup_url}")
+
+    if len(resolution.matched_rows) > 1:
+        lines.extend(
+            [
+                f"matched rows: {len(resolution.matched_rows)}",
+                f"preferred row: {_format_job_reference_row(resolution.preferred_row)}",
+            ]
+        )
+        if resolution.sibling_rows:
+            lines.append("siblings:")
+            lines.extend(
+                f"- {_format_job_reference_row(row)}" for row in resolution.sibling_rows
+            )
+    lines.append("note: direct open leaves application status unchanged")
+    return "\n".join(lines)
+
+
+def render_job_reference_open_error_report(
+    paths: WorkspacePaths,
+    reference: str,
+    error: str,
+) -> str:
+    return "\n".join(
+        [
+            "jobs_ai open",
+            f"database path: {paths.database_path}",
+            f"reference: {reference}",
+            "status: failed",
+            f"error: {error}",
+        ]
+    )
+
+
 def render_run_report(
     paths: WorkspacePaths,
     result: RunWorkflowResult,
@@ -2490,6 +2984,7 @@ def render_run_report(
             f"database path: {paths.database_path}",
             f"query: {result.query}",
             "intake mode: registry",
+            f"us only: {'yes' if result.us_only else 'no'}",
             f"workflow dir: {result.output_dir}",
             f"registry sources selected: {result.confirmed_source_count}",
             f"registry sources verified: {result.registry_verified_source_count}",
@@ -2533,6 +3028,7 @@ def render_run_report(
         if result.import_result is not None and result.import_result.errors:
             lines.append("import errors:")
             lines.extend(f"- {error}" for error in result.import_result.errors)
+        _append_run_location_guard_lines(lines, result.location_guard_result)
 
         resume_lines = _render_run_resume_lines(result)
         if resume_lines:
@@ -2565,6 +3061,7 @@ def render_run_report(
         f"database path: {paths.database_path}",
         f"query: {result.query}",
         "intake mode: discover",
+        f"us only: {'yes' if result.us_only else 'no'}",
         f"workflow dir: {result.output_dir}",
         (
             "discover report: "
@@ -2616,6 +3113,7 @@ def render_run_report(
             if search_result.status in {"provider_anomaly", "parse_failure", "fetch_failure"}
         )
         lines.append(f"search issues: {issue_count} (see discover report)")
+    _append_run_location_guard_lines(lines, result.location_guard_result)
 
     if result.import_result is not None and result.import_result.errors:
         lines.append("import errors:")
@@ -2709,6 +3207,7 @@ def build_run_report_payload(
         "database_path": str(paths.database_path),
         "query": result.query,
         "intake_mode": result.intake_mode,
+        "us_only": result.us_only,
         "workflow_dir": str(result.output_dir),
         "label": result.label,
         "confirmed_source_count": result.confirmed_source_count,
@@ -2749,6 +3248,8 @@ def build_run_report_payload(
         payload["registry_verified_source_count"] = result.registry_verified_source_count
     if result.import_result is not None:
         payload["import_errors"] = list(result.import_result.errors)
+    if result.location_guard_result is not None:
+        payload["location_guard"] = _invalid_location_payload(result.location_guard_result)
     if show_portal_hints:
         payload["portal_hint_details"] = [
             _run_portal_payload_line(item)
@@ -2773,6 +3274,41 @@ def render_run_json(
         indent=2,
         ensure_ascii=True,
     )
+
+
+def _append_run_location_guard_lines(
+    lines: list[str],
+    result: InvalidLocationMarkResult | None,
+) -> None:
+    if result is None:
+        return
+    lines.extend(
+        [
+            f"location guard: us-only scan inspected {result.total_jobs} jobs",
+            f"location guard marked invalid_location: {result.marked_jobs}",
+            f"location guard ambiguous kept: {result.ambiguous_jobs}",
+        ]
+    )
+    if result.deferred_jobs:
+        lines.append(f"location guard deferred by limit: {result.deferred_jobs}")
+
+
+def _invalid_location_payload(result: InvalidLocationMarkResult) -> dict[str, object]:
+    return {
+        "policy": "us_only" if result.us_only else "custom",
+        "dry_run": result.dry_run,
+        "limit": result.limit,
+        "ingest_batch_id": result.ingest_batch_id,
+        "query_text": result.query_text,
+        "total_jobs": result.total_jobs,
+        "candidate_jobs": result.candidate_jobs,
+        "marked_jobs": result.marked_jobs,
+        "deferred_jobs": result.deferred_jobs,
+        "already_invalid_jobs": result.already_invalid_jobs,
+        "ambiguous_jobs": result.ambiguous_jobs,
+        "us_allowed_jobs": result.us_allowed_jobs,
+        "skipped_jobs": result.skipped_jobs,
+    }
 
 
 def render_preflight_report(manifest: SessionManifest) -> str:
@@ -3154,6 +3690,141 @@ def render_application_tracking_mark_report(
     )
 
 
+def _application_tracking_batch_status(result: ApplicationStatusBatchResult) -> str:
+    if result.skipped:
+        return "success with skips" if result.updated else "failed"
+    if not result.updated:
+        return "failed"
+    return "success"
+
+
+def _application_tracking_reference_status(
+    result: ApplicationStatusBatchResult,
+    *,
+    success_if_all_skipped_reasons: frozenset[str] = frozenset(),
+) -> str:
+    if result.updated:
+        return "success with skips" if result.skipped else "success"
+    if (
+        result.skipped
+        and success_if_all_skipped_reasons
+        and all(issue.reason in success_if_all_skipped_reasons for issue in result.skipped)
+    ):
+        return "success"
+    return "failed"
+
+
+def render_application_tracking_batch_mark_report(
+    paths: WorkspacePaths,
+    result: ApplicationStatusBatchResult,
+) -> str:
+    lines = [
+        "jobs_ai track mark",
+        f"database path: {paths.database_path}",
+        f"requested status: {result.requested_status}",
+        f"updated jobs: {len(result.updated)}",
+        f"skipped targets: {len(result.skipped)}",
+        f"status: {_application_tracking_batch_status(result)}",
+    ]
+    if result.updated:
+        lines.append("updated:")
+        lines.extend(
+            (
+                f"- [job {snapshot.job_id}] {snapshot.company} | "
+                f"{snapshot.title} | {snapshot.location or 'location missing'} | "
+                f"current={snapshot.current_status}"
+            )
+            for snapshot in result.updated
+        )
+    if result.skipped:
+        lines.append("skipped:")
+        lines.extend(f"- job {issue.job_id}: {issue.reason}" for issue in result.skipped)
+    _append_guidance(
+        lines,
+        "next:",
+        (_cli_example(f"track list --status {result.requested_status}"),),
+    )
+    return "\n".join(lines)
+
+
+def render_application_tracking_reference_mark_report(
+    paths: WorkspacePaths,
+    resolution: JobReferenceResolution,
+    result: ApplicationStatusBatchResult,
+    *,
+    command_label: str = "jobs_ai track mark",
+    matched_rows: Sequence[JobReferenceRow] | None = None,
+    preferred_row: JobReferenceRow | None = None,
+    success_if_all_skipped_reasons: Sequence[str] = (),
+) -> str:
+    display_rows = tuple(matched_rows) if matched_rows is not None else resolution.matched_rows
+    display_preferred_row = preferred_row
+    if display_preferred_row is None:
+        if display_rows:
+            display_preferred_row = display_rows[0] if len(display_rows) == 1 else resolution.preferred_row
+        else:
+            display_preferred_row = resolution.preferred_row
+    status_label = _application_tracking_reference_status(
+        result,
+        success_if_all_skipped_reasons=frozenset(success_if_all_skipped_reasons),
+    )
+    lines = [
+        command_label,
+        f"database path: {paths.database_path}",
+        f"reference: {resolution.reference_text}",
+        f"reference kind: {resolution.reference_kind}",
+        f"requested status: {result.requested_status}",
+        f"matched rows: {len(display_rows)}",
+        f"canonical/preferred row: {_format_job_reference_row(display_preferred_row)}",
+        f"updated jobs: {len(result.updated)}",
+        (
+            "updated job ids: "
+            + (
+                ", ".join(str(job_id) for job_id in sorted(snapshot.job_id for snapshot in result.updated))
+                if result.updated
+                else "none"
+            )
+        ),
+        f"skipped targets: {len(result.skipped)}",
+        f"status: {status_label}",
+    ]
+    if resolution.reference_kind == "apply_url":
+        lines.insert(4, f"normalized apply_url: {resolution.normalized_apply_url}")
+        if (
+            resolution.canonical_lookup_url is not None
+            and resolution.canonical_lookup_url != resolution.normalized_apply_url
+        ):
+            lines.insert(5, f"canonical lookup url: {resolution.canonical_lookup_url}")
+
+    lines.append("matched:")
+    lines.extend(
+        (
+            f"- {_format_job_reference_row(resolution_row)}"
+            + (" | preferred" if resolution_row.job_id == display_preferred_row.job_id else "")
+        )
+        for resolution_row in display_rows
+    )
+    if result.updated:
+        lines.append("updated:")
+        lines.extend(
+            (
+                f"- [job {snapshot.job_id}] {snapshot.company} | "
+                f"{snapshot.title} | {snapshot.location or 'location missing'} | "
+                f"current={snapshot.current_status}"
+            )
+            for snapshot in result.updated
+        )
+    if result.skipped:
+        lines.append("skipped:")
+        lines.extend(f"- job {issue.job_id}: {issue.reason}" for issue in result.skipped)
+    _append_guidance(
+        lines,
+        "next:",
+        (_cli_example(f"track list --status {result.requested_status}"),),
+    )
+    return "\n".join(lines)
+
+
 def render_application_tracking_list_report(
     paths: WorkspacePaths,
     snapshots: Sequence[ApplicationStatusSnapshot],
@@ -3172,6 +3843,11 @@ def render_application_tracking_list_report(
 
     lines.append("status: success")
     for index, snapshot in enumerate(snapshots, start=1):
+        timestamp_label = (
+            f"   applied at: {snapshot.applied_timestamp or snapshot.latest_timestamp or 'none'}"
+            if snapshot.current_status == "applied"
+            else f"   latest timestamp: {snapshot.latest_timestamp or 'none'}"
+        )
         lines.extend(
             [
                 "",
@@ -3180,7 +3856,7 @@ def render_application_tracking_list_report(
                     f"{snapshot.title} | {snapshot.location or 'location missing'}"
                 ),
                 f"   current status: {snapshot.current_status}",
-                f"   latest timestamp: {snapshot.latest_timestamp or 'none'}",
+                timestamp_label,
             ]
         )
     return "\n".join(lines)
@@ -3313,6 +3989,21 @@ def _format_launch_execution_status(value: str) -> str:
     if value == SKIPPED_MISSING_URL_EXECUTION_STATUS:
         return "skipped (missing URL)"
     return value.replace("_", " ")
+
+
+def _format_job_reference_row(
+    row: JobReferenceRow,
+    *,
+    include_status: bool = True,
+) -> str:
+    parts = [
+        f"[job {row.job_id}] {row.company}",
+        row.title,
+        row.location or "location missing",
+    ]
+    if include_status:
+        parts.append(f"status {row.status}")
+    return " | ".join(parts)
 
 
 def _format_manifest_selection(selection: ManifestSelection | None, *, fallback: str) -> str:
@@ -3544,6 +4235,11 @@ def _selection_mode_detail(selection_mode: str | None) -> str | None:
         return (
             "existing eligible jobs reused from prior imports because this registry "
             "refresh imported 0 new jobs"
+        )
+    if selection_mode == "registry_refresh_no_actionable_new_reused_existing":
+        return (
+            "existing eligible jobs reused from prior imports because this registry "
+            "refresh produced no actionable new jobs"
         )
     return None
 

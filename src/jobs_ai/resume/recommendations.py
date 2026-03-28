@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import TARGET_ROLES
-from ..jobs.queue import RankedQueuedJob, select_ranked_apply_queue
-from ..jobs.scoring import ScoredJob
+from ..jobs.queue import RankedQueuedJob, select_ranked_apply_queue, summarize_queue_reason
+from ..jobs.scoring import ScoredJob, score_job
 from .config import get_profile_snippet, get_resume_variant
 
 TELEMETRY_KEYWORDS = ("telemetry", "observability")
@@ -45,36 +46,56 @@ def select_queue_recommendations(
     limit: int | None = None,
     ingest_batch_id: str | None = None,
     query_text: str | None = None,
+    us_only: bool = False,
 ) -> tuple[QueueRecommendation, ...]:
     queued_jobs = select_ranked_apply_queue(
         database_path,
         limit=limit,
         ingest_batch_id=ingest_batch_id,
         query_text=query_text,
+        us_only=us_only,
     )
     return tuple(recommend_queued_job(job) for job in queued_jobs)
 
 
-def recommend_queued_job(queued_job: RankedQueuedJob) -> QueueRecommendation:
-    decision = _decide_recommendation(queued_job.scored_job)
+def recommend_job_record(job_record: Mapping[str, object]) -> QueueRecommendation:
+    return recommend_scored_job(score_job(job_record))
+
+
+def recommend_scored_job(
+    scored_job: ScoredJob,
+    *,
+    rank: int = 1,
+    reason_summary: str | None = None,
+) -> QueueRecommendation:
+    decision = _decide_recommendation(scored_job)
     resume_variant = get_resume_variant(decision.resume_variant_key)
     snippet = get_profile_snippet(decision.snippet_key)
+    resolved_reason_summary = reason_summary or summarize_queue_reason(scored_job)
     return QueueRecommendation(
-        rank=queued_job.rank,
-        job_id=queued_job.scored_job.job_id,
-        company=queued_job.scored_job.company,
-        title=queued_job.scored_job.title,
-        location=queued_job.scored_job.location,
-        apply_url=queued_job.scored_job.apply_url,
-        portal_type=queued_job.scored_job.portal_type,
-        source=queued_job.scored_job.source,
-        score=queued_job.scored_job.total_score,
+        rank=rank,
+        job_id=scored_job.job_id,
+        company=scored_job.company,
+        title=scored_job.title,
+        location=scored_job.location,
+        apply_url=scored_job.apply_url,
+        portal_type=scored_job.portal_type,
+        source=scored_job.source,
+        score=scored_job.total_score,
         resume_variant_key=resume_variant.key,
         resume_variant_label=resume_variant.label,
         snippet_key=snippet.key,
         snippet_label=snippet.label,
         snippet_text=snippet.text,
-        explanation=_build_explanation(decision.explanation_prefix, queued_job),
+        explanation=_build_explanation(decision.explanation_prefix, resolved_reason_summary),
+    )
+
+
+def recommend_queued_job(queued_job: RankedQueuedJob) -> QueueRecommendation:
+    return recommend_scored_job(
+        queued_job.scored_job,
+        rank=queued_job.rank,
+        reason_summary=queued_job.reason_summary,
     )
 
 
@@ -123,10 +144,10 @@ def _decide_recommendation(job: ScoredJob) -> _RecommendationDecision:
     )
 
 
-def _build_explanation(explanation_prefix: str, queued_job: RankedQueuedJob) -> str:
-    if queued_job.reason_summary == "no strong score signals yet":
+def _build_explanation(explanation_prefix: str, reason_summary: str) -> str:
+    if reason_summary == "no strong score signals yet":
         return explanation_prefix
-    return f"{explanation_prefix}; queue signals: {queued_job.reason_summary}"
+    return f"{explanation_prefix}; queue signals: {reason_summary}"
 
 
 def _contains_keyword(text: str, keywords: tuple[str, ...]) -> bool:

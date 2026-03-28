@@ -11,6 +11,8 @@ from .db import initialize_schema
 from .discover.cli import run_discover_command
 from .discover.models import DiscoverRun
 from .jobs.importer import JobImportResult, import_jobs_from_file
+from .launch_preview import select_launch_preview
+from .maintenance import InvalidLocationMarkResult, mark_invalid_location_jobs
 from .session_manifest import SessionSelectionScope
 from .session_start import SessionStartResult, start_session
 from .sources.models import SourceRegistryCollectResult
@@ -43,6 +45,8 @@ class RunWorkflowResult:
     label: str | None
     open_requested: bool
     executor_mode: str | None
+    us_only: bool
+    location_guard_result: InvalidLocationMarkResult | None
 
     @property
     def confirmed_source_count(self) -> int:
@@ -91,6 +95,7 @@ def run_operator_workflow(
     executor_mode: str | None = None,
     capture_search_artifacts: bool = False,
     use_registry: bool = False,
+    us_only: bool = False,
     created_at: datetime | None = None,
     fetcher: Fetcher | None = None,
 ) -> RunWorkflowResult:
@@ -125,13 +130,10 @@ def run_operator_workflow(
         if registry_collect_result.import_result is not None:
             import_result = registry_collect_result.import_result
             if import_result.inserted_count == 0:
-                session_batch_id = None
-                session_selection_scope = SessionSelectionScope(
-                    batch_id=None,
-                    source_query=query,
-                    import_source=None,
+                session_batch_id, session_selection_scope = _registry_reuse_existing_selection_scope(
+                    query=query,
+                    import_result=import_result,
                     selection_mode="registry_refresh_empty_reused_existing",
-                    refresh_batch_id=import_result.batch_id,
                 )
             else:
                 session_selection_scope = SessionSelectionScope(
@@ -140,6 +142,39 @@ def run_operator_workflow(
                     import_source=import_result.import_source,
                     selection_mode="registry_new_imports",
                     refresh_batch_id=import_result.batch_id,
+                )
+        location_guard_result: InvalidLocationMarkResult | None = None
+        if us_only:
+            location_guard_result = mark_invalid_location_jobs(
+                paths.database_path,
+                us_only=True,
+                ingest_batch_id=session_batch_id,
+                query_text=query if session_batch_id is None else None,
+                actionable_only=True,
+            )
+        if (
+            registry_collect_result.import_result is not None
+            and session_batch_id is not None
+            and not select_launch_preview(
+                paths.database_path,
+                limit=1,
+                ingest_batch_id=session_batch_id,
+                query_text=query,
+                us_only=us_only,
+            )
+        ):
+            session_batch_id, session_selection_scope = _registry_reuse_existing_selection_scope(
+                query=query,
+                import_result=registry_collect_result.import_result,
+                selection_mode="registry_refresh_no_actionable_new_reused_existing",
+            )
+            if us_only:
+                location_guard_result = mark_invalid_location_jobs(
+                    paths.database_path,
+                    us_only=True,
+                    ingest_batch_id=None,
+                    query_text=query,
+                    actionable_only=True,
                 )
         initialize_schema(paths.database_path)
         session_result = start_session(
@@ -156,6 +191,7 @@ def run_operator_workflow(
             source_query=query,
             job_query=query,
             selection_scope=session_selection_scope,
+            us_only=us_only,
         )
         return RunWorkflowResult(
             query=query,
@@ -173,6 +209,8 @@ def run_operator_workflow(
             label=label,
             open_requested=open_urls,
             executor_mode=session_result.executor_mode,
+            us_only=us_only,
+            location_guard_result=location_guard_result,
         )
 
     discover_run = run_discover_command(
@@ -203,6 +241,7 @@ def run_operator_workflow(
     collect_run: CollectRun | None = None
     import_result: JobImportResult | None = None
 
+    location_guard_result: InvalidLocationMarkResult | None = None
     if collected_sources:
         collect_run = run_collect_command(
             paths,
@@ -232,6 +271,13 @@ def run_operator_workflow(
                 import_source=str(leads_path),
                 created_at=effective_created_at,
             )
+            if us_only:
+                location_guard_result = mark_invalid_location_jobs(
+                    paths.database_path,
+                    us_only=True,
+                    ingest_batch_id=workflow_batch_id,
+                    actionable_only=True,
+                )
 
     initialize_schema(paths.database_path)
     session_result = start_session(
@@ -246,6 +292,7 @@ def run_operator_workflow(
         created_at=effective_created_at,
         ingest_batch_id=workflow_batch_id,
         source_query=discover_run.report.query,
+        us_only=us_only,
     )
 
     return RunWorkflowResult(
@@ -264,6 +311,8 @@ def run_operator_workflow(
         label=label,
         open_requested=open_urls,
         executor_mode=session_result.executor_mode,
+        us_only=us_only,
+        location_guard_result=location_guard_result,
     )
 
 
@@ -283,3 +332,21 @@ def _normalize_created_at(created_at: datetime | None) -> datetime:
     if created_at.tzinfo is None:
         return created_at.replace(tzinfo=timezone.utc)
     return created_at.astimezone(timezone.utc)
+
+
+def _registry_reuse_existing_selection_scope(
+    *,
+    query: str,
+    import_result: JobImportResult,
+    selection_mode: str,
+) -> tuple[None, SessionSelectionScope]:
+    return (
+        None,
+        SessionSelectionScope(
+            batch_id=None,
+            source_query=query,
+            import_source=None,
+            selection_mode=selection_mode,
+            refresh_batch_id=import_result.batch_id,
+        ),
+    )

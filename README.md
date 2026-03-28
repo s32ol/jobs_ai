@@ -217,6 +217,15 @@ Record outcomes for jobs from a session.
 jobs-ai session mark applied --manifest data/exports/<session-manifest>.json --all
 ```
 
+### `jobs-ai apply-url`
+
+Mark a job as applied directly from its apply URL. When the URL resolves to one job, the command records `applied` automatically. If multiple jobs share the URL group, pass `--job-id`.
+
+```bash
+jobs-ai apply-url "https://boards.greenhouse.io/example/jobs/1234567890"
+jobs-ai apply-url "https://boards.greenhouse.io/example/jobs/1234567890" --job-id 42
+```
+
 ### `jobs-ai track list`
 
 List current tracked statuses, optionally filtered by status.

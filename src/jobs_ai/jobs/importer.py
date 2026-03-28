@@ -6,9 +6,14 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from ..db import connect_database, find_duplicate_job_match, insert_job
-from .identity import normalize_batch_id, normalize_optional_metadata
-from .normalization import normalize_job_import_fields
+from ..db import (
+    connect_database,
+    find_duplicate_job_match,
+    insert_job,
+    resolve_canonical_duplicates_for_job,
+)
+from .identity import build_job_identity, normalize_batch_id, normalize_optional_metadata
+from .normalization import AUTO_SKIP_REASON, normalize_job_import_fields, should_auto_skip_job
 
 REQUIRED_IMPORT_FIELDS = ("source", "company", "title", "location")
 OPTIONAL_IMPORT_FIELDS = (
@@ -20,6 +25,7 @@ OPTIONAL_IMPORT_FIELDS = (
     "found_at",
 )
 SUPPORTED_IMPORT_SUFFIXES = {".json"}
+AUTO_SKIP_STATUS = "skipped"
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +36,8 @@ class JobImportResult:
     source_query: str | None = None
     import_source: str | None = None
     duplicate_count: int = 0
+    canonical_duplicate_groups_resolved: int = 0
+    superseded_count: int = 0
     error_count: int = 0
     skipped: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
@@ -47,6 +55,8 @@ def import_jobs_from_file(
     records = load_job_records(input_path)
     inserted_count = 0
     duplicate_count = 0
+    resolved_canonical_apply_urls: set[str] = set()
+    superseded_count = 0
     skipped: list[str] = []
     errors: list[str] = []
     normalized_batch_id = _resolve_batch_id(batch_id, created_at=created_at)
@@ -64,17 +74,19 @@ def import_jobs_from_file(
                 errors.append(f"record {record_number}: {error}")
                 continue
 
-            duplicate_match = find_duplicate_job_match(connection, job_record)
-            if duplicate_match is not None:
-                duplicate_count += 1
-                skipped.append(
-                    f"record {record_number}: duplicate skipped via "
-                    f"{describe_duplicate_match(duplicate_match)} "
-                    f"(existing job id {duplicate_match.job_id})"
-                )
-                continue
+            identity = build_job_identity(job_record)
+            if identity.canonical_apply_url is None:
+                duplicate_match = find_duplicate_job_match(connection, job_record)
+                if duplicate_match is not None:
+                    duplicate_count += 1
+                    skipped.append(
+                        f"record {record_number}: duplicate skipped via "
+                        f"{describe_duplicate_match(duplicate_match)} "
+                        f"(existing job id {duplicate_match.job_id})"
+                    )
+                    continue
 
-            insert_job(
+            inserted_job_id = insert_job(
                 connection,
                 {
                     **job_record,
@@ -84,6 +96,17 @@ def import_jobs_from_file(
                 },
             )
             inserted_count += 1
+            resolution = resolve_canonical_duplicates_for_job(
+                connection,
+                job_id=inserted_job_id,
+            )
+            if resolution is not None and resolution.changed_job_ids:
+                resolved_canonical_apply_urls.add(resolution.canonical_apply_url)
+                superseded_count += sum(
+                    1
+                    for job_id in resolution.superseded_job_ids
+                    if job_id in resolution.changed_job_ids
+                )
         connection.commit()
 
     return JobImportResult(
@@ -93,6 +116,8 @@ def import_jobs_from_file(
         source_query=normalized_source_query,
         import_source=normalized_import_source,
         duplicate_count=duplicate_count,
+        canonical_duplicate_groups_resolved=len(resolved_canonical_apply_urls),
+        superseded_count=superseded_count,
         error_count=len(errors),
         skipped=tuple(skipped),
         errors=tuple(errors),
@@ -133,7 +158,16 @@ def normalize_import_record(record: object) -> tuple[dict[str, str | None], str 
     if missing_fields:
         return {}, f"missing required fields: {', '.join(missing_fields)}"
 
-    normalized_record["raw_json"] = json.dumps(record, ensure_ascii=True)
+    raw_payload = dict(record)
+    title = normalized_record.get("title")
+    if title is not None and should_auto_skip_job(title):
+        print(f"auto-skip: title matched filter -> {title}")
+        normalized_record["status"] = AUTO_SKIP_STATUS
+        normalized_record["reason"] = AUTO_SKIP_REASON
+        raw_payload["status"] = AUTO_SKIP_STATUS
+        raw_payload["reason"] = AUTO_SKIP_REASON
+
+    normalized_record["raw_json"] = json.dumps(raw_payload, ensure_ascii=True)
     return normalized_record, None
 
 

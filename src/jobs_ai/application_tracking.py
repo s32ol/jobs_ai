@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
-from .db import connect_database
+from .db import connect_database, resolve_canonical_duplicates_for_job
 
 APPLICATION_STATUSES = (
     "new",
@@ -18,6 +18,8 @@ APPLICATION_STATUSES = (
     "offer",
     "rejected",
     "skipped",
+    "invalid_location",
+    "superseded",
 )
 SESSION_MARK_APPLICATION_STATUSES = tuple(
     status
@@ -31,11 +33,13 @@ _ALLOWED_STATUS_TRANSITIONS = {
         {
             "applied",
             "skipped",
+            "invalid_location",
             "recruiter_screen",
             "assessment",
             "interview",
             "offer",
             "rejected",
+            "superseded",
         }
     ),
     "applied": frozenset(
@@ -45,14 +49,29 @@ _ALLOWED_STATUS_TRANSITIONS = {
             "interview",
             "offer",
             "rejected",
+            "superseded",
         }
     ),
-    "recruiter_screen": frozenset({"assessment", "interview", "offer", "rejected"}),
-    "assessment": frozenset({"interview", "offer", "rejected"}),
-    "interview": frozenset({"offer", "rejected"}),
-    "offer": frozenset(),
-    "rejected": frozenset(),
-    "skipped": frozenset({"opened", "applied"}),
+    "recruiter_screen": frozenset({"assessment", "interview", "offer", "rejected", "superseded"}),
+    "assessment": frozenset({"interview", "offer", "rejected", "superseded"}),
+    "interview": frozenset({"offer", "rejected", "superseded"}),
+    "offer": frozenset({"superseded"}),
+    "rejected": frozenset({"superseded"}),
+    "skipped": frozenset({"opened", "applied", "invalid_location", "superseded"}),
+    "invalid_location": frozenset({"opened", "skipped", "superseded"}),
+    "superseded": frozenset(
+        {
+            "invalid_location",
+            "opened",
+            "applied",
+            "recruiter_screen",
+            "assessment",
+            "interview",
+            "offer",
+            "rejected",
+            "skipped",
+        }
+    ),
 }
 
 LIST_APPLICATION_STATUSES_BASE_SQL = """
@@ -62,6 +81,7 @@ SELECT
     jobs.title,
     jobs.location,
     jobs.status,
+    jobs.applied_at,
     (
         SELECT application_tracking.created_at
         FROM application_tracking
@@ -84,7 +104,8 @@ SELECT
     company,
     title,
     location,
-    status
+    status,
+    applied_at
 FROM jobs
 WHERE id = ?
 """
@@ -113,6 +134,7 @@ class ApplicationStatusSnapshot:
     location: str | None
     current_status: str
     latest_timestamp: str | None
+    applied_timestamp: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +179,7 @@ def record_application_status(
     *,
     job_id: int,
     status: str,
+    resolve_duplicates: bool = True,
 ) -> ApplicationStatusSnapshot:
     normalized_status = normalize_application_status(status)
     with closing(connect_database(database_path)) as connection:
@@ -169,11 +192,15 @@ def record_application_status(
         )
         if transition_error is not None:
             raise ValueError(transition_error)
-        snapshot = _record_application_status_for_row(
+        _record_application_status_for_row(
             connection,
             job_row=job_row,
             normalized_status=normalized_status,
         )
+        if resolve_duplicates:
+            resolve_canonical_duplicates_for_job(connection, job_id=job_id)
+        snapshot = _load_application_status_snapshot(connection, job_id)
+        assert snapshot is not None
         connection.commit()
 
     return snapshot
@@ -184,9 +211,10 @@ def record_application_statuses(
     *,
     job_ids: Sequence[int],
     status: str,
+    resolve_duplicates: bool = True,
 ) -> ApplicationStatusBatchResult:
     normalized_status = normalize_application_status(status)
-    updated: list[ApplicationStatusSnapshot] = []
+    updated_job_ids: list[int] = []
     skipped: list[ApplicationStatusIssue] = []
     seen_job_ids: set[int] = set()
 
@@ -223,16 +251,21 @@ def record_application_statuses(
                 )
                 continue
 
-            updated.append(
-                _record_application_status_for_row(
-                    connection,
-                    job_row=job_row,
-                    normalized_status=normalized_status,
-                )
+            _record_application_status_for_row(
+                connection,
+                job_row=job_row,
+                normalized_status=normalized_status,
             )
+            updated_job_ids.append(job_id)
 
-        if updated:
+        if updated_job_ids:
+            if resolve_duplicates:
+                for updated_job_id in updated_job_ids:
+                    resolve_canonical_duplicates_for_job(connection, job_id=updated_job_id)
+            updated = _load_application_status_snapshots(connection, updated_job_ids)
             connection.commit()
+        else:
+            updated = ()
 
     return ApplicationStatusBatchResult(
         requested_status=normalized_status,
@@ -264,6 +297,7 @@ def list_application_statuses(
             location=_nullable_text(row["location"]),
             current_status=str(row["status"]),
             latest_timestamp=_nullable_text(row["latest_timestamp"]),
+            applied_timestamp=_nullable_text(row["applied_at"]),
         )
         for row in rows
     )
@@ -293,6 +327,7 @@ def get_application_status(database_path: Path, *, job_id: int) -> ApplicationSt
             location=_nullable_text(job_row["location"]),
             current_status=str(job_row["status"]),
             latest_timestamp=history[-1].timestamp if history else None,
+            applied_timestamp=_nullable_text(job_row["applied_at"]),
         ),
         history=history,
     )
@@ -308,6 +343,50 @@ def _nullable_text(value: object) -> str | None:
 
 def _get_job_status_row(connection: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
     return connection.execute(GET_JOB_STATUS_SQL, (job_id,)).fetchone()
+
+
+def _load_application_status_snapshot(
+    connection: sqlite3.Connection,
+    job_id: int,
+) -> ApplicationStatusSnapshot | None:
+    job_row = _get_job_status_row(connection, job_id)
+    if job_row is None:
+        return None
+    latest_tracking_row = connection.execute(
+        """
+        SELECT created_at
+        FROM application_tracking
+        WHERE job_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (job_id,),
+    ).fetchone()
+    return ApplicationStatusSnapshot(
+        job_id=int(job_row["id"]),
+        company=str(job_row["company"]),
+        title=str(job_row["title"]),
+        location=_nullable_text(job_row["location"]),
+        current_status=str(job_row["status"]),
+        latest_timestamp=(
+            _nullable_text(latest_tracking_row["created_at"])
+            if latest_tracking_row is not None
+            else None
+        ),
+        applied_timestamp=_nullable_text(job_row["applied_at"]),
+    )
+
+
+def _load_application_status_snapshots(
+    connection: sqlite3.Connection,
+    job_ids: Sequence[int],
+) -> tuple[ApplicationStatusSnapshot, ...]:
+    snapshots: list[ApplicationStatusSnapshot] = []
+    for job_id in job_ids:
+        snapshot = _load_application_status_snapshot(connection, int(job_id))
+        if snapshot is not None:
+            snapshots.append(snapshot)
+    return tuple(snapshots)
 
 
 def _validate_transition(
@@ -354,10 +433,17 @@ def _record_application_status_for_row(
     ).fetchone()
     assert tracking_row is not None
     timestamp = str(tracking_row["created_at"])
-    connection.execute(
-        "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
-        (normalized_status, timestamp, job_id),
-    )
+    if normalized_status == "applied":
+        # Keep the first-class applied timestamp aligned with the newest applied event.
+        connection.execute(
+            "UPDATE jobs SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
+            (normalized_status, timestamp, timestamp, job_id),
+        )
+    else:
+        connection.execute(
+            "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
+            (normalized_status, timestamp, job_id),
+        )
     return ApplicationStatusSnapshot(
         job_id=job_id,
         company=str(job_row["company"]),
@@ -365,4 +451,5 @@ def _record_application_status_for_row(
         location=_nullable_text(job_row["location"]),
         current_status=normalized_status,
         latest_timestamp=timestamp,
+        applied_timestamp=timestamp if normalized_status == "applied" else _nullable_text(job_row["applied_at"]),
     )

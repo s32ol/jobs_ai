@@ -215,6 +215,17 @@ class SessionMarkTest(unittest.TestCase):
                 connection.commit()
 
             first_result = RUNNER.invoke(app, ["session", "mark", "applied", str(job_id)], env=env)
+            with closing(connect_database(database_path)) as connection:
+                applied_row = connection.execute(
+                    "SELECT status, applied_at FROM jobs WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+            self.assertIsNotNone(applied_row)
+            assert applied_row is not None
+            first_applied_at = applied_row["applied_at"]
+            self.assertEqual(applied_row["status"], "applied")
+            self.assertIsNotNone(first_applied_at)
+
             second_result = RUNNER.invoke(app, ["session", "mark", "interview", str(job_id)], env=env)
 
             self.assertEqual(first_result.exit_code, 0)
@@ -223,6 +234,240 @@ class SessionMarkTest(unittest.TestCase):
             self.assertEqual(
                 get_application_status(database_path, job_id=job_id).snapshot.current_status,
                 "interview",
+            )
+            with closing(connect_database(database_path)) as connection:
+                final_row = connection.execute(
+                    "SELECT status, applied_at FROM jobs WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+            self.assertIsNotNone(final_row)
+            assert final_row is not None
+            self.assertEqual(final_row["status"], "interview")
+            self.assertEqual(final_row["applied_at"], first_applied_at)
+
+    def test_cli_session_mark_supports_superseded_via_manifest_indexes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Acme Data",
+                    title="Senior Data Engineer",
+                    location="Remote",
+                    raw_payload={"description": "Python pipelines"},
+                    apply_url="https://example.com/jobs/1",
+                )
+                connection.commit()
+
+            manifest_path = _write_manifest(
+                Path(tmp_dir) / "session.json",
+                [
+                    {
+                        "rank": 1,
+                        "job_id": job_id,
+                        "company": "Acme Data",
+                        "title": "Senior Data Engineer",
+                        "location": "Remote",
+                        "source": "manual",
+                        "apply_url": "https://example.com/jobs/1",
+                        "score": 20,
+                        "recommended_resume_variant": {
+                            "key": "data-engineering",
+                            "label": "Data Engineering Resume",
+                        },
+                        "recommended_profile_snippet": {
+                            "key": "pipeline-delivery",
+                            "label": "Pipeline Delivery",
+                            "text": "Python-first pipeline delivery across SQL warehouses and production data systems.",
+                        },
+                        "explanation": "matched data engineering signals from title",
+                    }
+                ],
+            )
+
+            result = RUNNER.invoke(
+                app,
+                [
+                    "session",
+                    "mark",
+                    "superseded",
+                    "--manifest",
+                    str(manifest_path),
+                    "--indexes",
+                    "1",
+                ],
+                env=env,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("jobs_ai session mark", result.stdout)
+            self.assertIn("requested status: superseded", result.stdout)
+            self.assertIn("updated jobs: 1", result.stdout)
+            self.assertEqual(
+                get_application_status(database_path, job_id=job_id).snapshot.current_status,
+                "superseded",
+            )
+
+    def test_cli_session_mark_supports_invalid_location_via_manifest_indexes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Acme Data",
+                    title="Senior Data Engineer",
+                    location="Toronto, Canada",
+                    raw_payload={"description": "Python pipelines"},
+                    apply_url="https://example.com/jobs/1",
+                )
+                connection.commit()
+
+            manifest_path = _write_manifest(
+                Path(tmp_dir) / "session.json",
+                [
+                    {
+                        "rank": 1,
+                        "job_id": job_id,
+                        "company": "Acme Data",
+                        "title": "Senior Data Engineer",
+                        "location": "Toronto, Canada",
+                        "source": "manual",
+                        "apply_url": "https://example.com/jobs/1",
+                        "score": 20,
+                        "recommended_resume_variant": {
+                            "key": "data-engineering",
+                            "label": "Data Engineering Resume",
+                        },
+                        "recommended_profile_snippet": {
+                            "key": "pipeline-delivery",
+                            "label": "Pipeline Delivery",
+                            "text": "Python-first pipeline delivery across SQL warehouses and production data systems.",
+                        },
+                        "explanation": "matched data engineering signals from title",
+                    }
+                ],
+            )
+
+            result = RUNNER.invoke(
+                app,
+                [
+                    "session",
+                    "mark",
+                    "invalid_location",
+                    "--manifest",
+                    str(manifest_path),
+                    "--indexes",
+                    "1",
+                ],
+                env=env,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("requested status: invalid_location", result.stdout)
+            self.assertEqual(
+                get_application_status(database_path, job_id=job_id).snapshot.current_status,
+                "invalid_location",
+            )
+
+    def test_cli_session_mark_applied_collapses_duplicate_cluster_to_one_applied_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            env = {"JOBS_AI_DB_PATH": str(database_path)}
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                first_job_id = _insert_job_with_status(
+                    connection,
+                    status="applied",
+                    source="manual",
+                    company="Qualified Health",
+                    title="Data Engineer",
+                    location="Remote",
+                    raw_payload={"description": "Python pipelines"},
+                    apply_url="https://example.com/jobs/1",
+                )
+                second_job_id = _insert_job_with_status(
+                    connection,
+                    status="opened",
+                    source="manual",
+                    company="Qualified Health",
+                    title="Sr. Data Engineer - Healthcare Data Infrastructure",
+                    location="Remote",
+                    raw_payload={"description": "Python pipelines"},
+                    apply_url="https://example.com/jobs/1",
+                )
+                third_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Qualified Health",
+                    title="Platform Data Engineer",
+                    location="Remote",
+                    raw_payload={"description": "Python pipelines"},
+                    apply_url="https://example.com/jobs/1",
+                )
+                connection.commit()
+
+            manifest_path = _write_manifest(
+                Path(tmp_dir) / "session.json",
+                [
+                    {
+                        "rank": 1,
+                        "job_id": second_job_id,
+                        "company": "Qualified Health",
+                        "title": "Sr. Data Engineer - Healthcare Data Infrastructure",
+                        "location": "Remote",
+                        "source": "manual",
+                        "apply_url": "https://example.com/jobs/1",
+                        "score": 20,
+                        "recommended_resume_variant": {
+                            "key": "data-engineering",
+                            "label": "Data Engineering Resume",
+                        },
+                        "recommended_profile_snippet": {
+                            "key": "pipeline-delivery",
+                            "label": "Pipeline Delivery",
+                            "text": "Python-first pipeline delivery across SQL warehouses and production data systems.",
+                        },
+                        "explanation": "matched data engineering signals from title",
+                    }
+                ],
+            )
+
+            result = RUNNER.invoke(
+                app,
+                [
+                    "session",
+                    "mark",
+                    "applied",
+                    "--manifest",
+                    str(manifest_path),
+                    "--indexes",
+                    "1",
+                ],
+                env=env,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("requested status: applied", result.stdout)
+            self.assertEqual(
+                get_application_status(database_path, job_id=first_job_id).snapshot.current_status,
+                "superseded",
+            )
+            self.assertEqual(
+                get_application_status(database_path, job_id=second_job_id).snapshot.current_status,
+                "applied",
+            )
+            self.assertEqual(
+                get_application_status(database_path, job_id=third_job_id).snapshot.current_status,
+                "superseded",
             )
 
     def test_cli_session_mark_manifest_all_marks_only_launchable_items(self) -> None:

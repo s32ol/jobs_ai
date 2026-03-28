@@ -107,6 +107,48 @@ class LaunchPreviewTest(unittest.TestCase):
             self.assertEqual([preview.job_id for preview in previews], [new_job_id])
             self.assertTrue(all(preview.company != "Northwind Talent" for preview in previews))
 
+    def test_select_launch_preview_us_only_excludes_obvious_non_us_but_keeps_ambiguous_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"
+            initialize_schema(database_path)
+
+            with closing(connect_database(database_path)) as connection:
+                us_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Acme Data",
+                    title="Analytics Engineer",
+                    location="Sacramento, CA",
+                    apply_url="https://boards.greenhouse.io/acme/jobs/1",
+                    raw_payload={"description": "Looker dashboards"},
+                )
+                ambiguous_job_id = _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Bright Metrics",
+                    title="Platform Engineer",
+                    location="Remote",
+                    apply_url="https://example.com/jobs/2",
+                    raw_payload={"description": "Python services"},
+                )
+                _insert_job_with_status(
+                    connection,
+                    source="manual",
+                    company="Northwind Talent",
+                    title="Data Engineer",
+                    location="Toronto, Canada",
+                    apply_url="https://example.com/jobs/3",
+                    raw_payload={"description": "Python pipelines"},
+                )
+                connection.commit()
+
+            previews = select_launch_preview(database_path, us_only=True)
+
+            self.assertEqual(
+                {preview.job_id for preview in previews},
+                {us_job_id, ambiguous_job_id},
+            )
+
     def test_cli_launch_preview_reports_apply_url_and_recommendation_info(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             database_path = Path(tmp_dir) / "runtime" / "jobs_ai.db"

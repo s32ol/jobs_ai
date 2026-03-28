@@ -4,17 +4,22 @@ from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from .db_runtime import (
     backend_name_for_connection,
     connect_database,
     database_exists,
+    fallback_reason_for_connection,
+    fallback_triggered_for_connection,
     resolve_database_runtime,
     table_columns_from_connection,
     table_names_from_connection,
+    target_label_for_connection,
 )
 from .jobs.identity import (
     build_job_identity,
+    canonicalize_apply_url,
     normalize_optional_metadata,
 )
 
@@ -64,6 +69,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     canonical_apply_url TEXT,
     identity_key TEXT,
     status TEXT NOT NULL DEFAULT 'new',
+    applied_at TEXT,
     raw_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -160,6 +166,7 @@ POSTGRES_BASE_SCHEMA_STATEMENTS = (
         canonical_apply_url TEXT,
         identity_key TEXT,
         status TEXT NOT NULL DEFAULT 'new',
+        applied_at TEXT,
         raw_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP::text,
@@ -263,6 +270,7 @@ INSERT INTO jobs (
     source_registry_id,
     canonical_apply_url,
     identity_key,
+    status,
     raw_json
 ) VALUES (
     ?,
@@ -281,6 +289,7 @@ INSERT INTO jobs (
     ?,
     ?,
     ?,
+    COALESCE(?, 'new'),
     ?
 )
 """
@@ -357,6 +366,106 @@ WHERE id = ?
 LIMIT 1
 """
 
+FIND_JOBS_BY_APPLY_URL_SQL = """
+SELECT
+    id,
+    company,
+    title,
+    apply_url,
+    status,
+    portal_type
+FROM jobs
+WHERE apply_url = ?
+ORDER BY id
+"""
+
+FIND_JOBS_BY_APPLY_URL_INSPECT_SQL = """
+SELECT
+    jobs.id,
+    jobs.source,
+    jobs.source_job_id,
+    jobs.company,
+    jobs.title,
+    jobs.location,
+    jobs.apply_url,
+    jobs.portal_type,
+    jobs.posted_at,
+    jobs.found_at,
+    jobs.raw_json,
+    jobs.status,
+    jobs.canonical_apply_url,
+    jobs.identity_key,
+    (
+        SELECT application_tracking.status
+        FROM application_tracking
+        WHERE application_tracking.job_id = jobs.id
+          AND application_tracking.status <> 'superseded'
+        ORDER BY application_tracking.created_at DESC, application_tracking.id DESC
+        LIMIT 1
+    ) AS latest_non_superseded_tracking_status,
+    EXISTS(
+        SELECT 1
+        FROM applications
+        WHERE applications.job_id = jobs.id
+          AND applications.applied_at IS NOT NULL
+        LIMIT 1
+    ) AS has_applied_application
+FROM jobs
+WHERE jobs.apply_url = ?
+ORDER BY jobs.id
+"""
+
+GET_JOB_CANONICAL_APPLY_URL_SQL = """
+SELECT canonical_apply_url
+FROM jobs
+WHERE id = ?
+LIMIT 1
+"""
+
+LIST_CANONICAL_DUPLICATE_GROUPS_SQL = """
+SELECT canonical_apply_url
+FROM jobs
+WHERE canonical_apply_url IS NOT NULL
+GROUP BY canonical_apply_url
+HAVING COUNT(*) > 1
+ORDER BY MIN(id)
+"""
+
+SELECT_CANONICAL_DUPLICATE_GROUP_SQL = """
+SELECT
+    jobs.id,
+    jobs.source,
+    jobs.company,
+    jobs.title,
+    jobs.location,
+    jobs.apply_url,
+    jobs.portal_type,
+    jobs.posted_at,
+    jobs.found_at,
+    jobs.raw_json,
+    jobs.status,
+    jobs.created_at,
+    jobs.canonical_apply_url,
+    (
+        SELECT application_tracking.status
+        FROM application_tracking
+        WHERE application_tracking.job_id = jobs.id
+          AND application_tracking.status <> 'superseded'
+        ORDER BY application_tracking.created_at DESC, application_tracking.id DESC
+        LIMIT 1
+    ) AS latest_non_superseded_tracking_status,
+    EXISTS(
+        SELECT 1
+        FROM applications
+        WHERE applications.job_id = jobs.id
+          AND applications.applied_at IS NOT NULL
+        LIMIT 1
+    ) AS has_applied_application
+FROM jobs
+WHERE jobs.canonical_apply_url = ?
+ORDER BY jobs.id
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class DuplicateJobMatch:
@@ -382,6 +491,77 @@ class SessionHistoryEntry:
     batch_id: str | None
     source_query: str | None
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyUrlJobMatch:
+    job_id: int
+    company: str
+    title: str
+    apply_url: str
+    status: str
+    portal_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyUrlLookupResult:
+    apply_url: str
+    backend: str
+    target_label: str
+    fallback_triggered: bool
+    fallback_reason: str | None
+    matches: tuple[ApplyUrlJobMatch, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyUrlInspectMatch:
+    job_id: int
+    company: str
+    title: str
+    location: str | None
+    status: str
+    resolved_status: str
+    portal_type: str | None
+    source: str
+    apply_url: str
+    canonical_apply_url: str | None
+    identity_key: str | None
+    actionable: bool
+    launchable: bool
+    warnings: tuple[str, ...]
+    recommended_resume_variant_key: str | None
+    recommended_resume_variant_label: str | None
+    recommended_profile_snippet_key: str | None
+    recommended_profile_snippet_label: str | None
+    recommended_profile_snippet_text: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyUrlInspectResult:
+    apply_url: str
+    backend: str
+    target_label: str
+    fallback_triggered: bool
+    fallback_reason: str | None
+    matches: tuple[ApplyUrlInspectMatch, ...]
+    preferred_job_id: int | None
+    sibling_job_ids: tuple[int, ...]
+    effective_state: str | None
+    url_already_handled: bool
+    opened_job_ids: tuple[int, ...]
+    applied_job_ids: tuple[int, ...]
+    rejected_job_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalDuplicateGroupResolution:
+    canonical_apply_url: str
+    group_size: int
+    winner_job_id: int
+    winner_status: str
+    superseded_job_ids: tuple[int, ...]
+    reactivated_job_ids: tuple[int, ...]
+    changed_job_ids: tuple[int, ...]
 
 
 def initialize_schema(database_path: Path, *, backfill_identity: bool = True) -> None:
@@ -434,6 +614,7 @@ def insert_job(connection, job_record: Mapping[str, object]) -> int:
             _nullable_int(job_record.get("source_registry_id")),
             identity.canonical_apply_url,
             identity.identity_key,
+            _normalize_job_status(job_record.get("status")),
             job_record["raw_json"],
         ),
     )
@@ -494,6 +675,89 @@ def find_duplicate_job_id(
     if match is None:
         return None
     return match.job_id
+
+
+def resolve_canonical_duplicates_for_job(
+    connection,
+    *,
+    job_id: int,
+    dry_run: bool = False,
+) -> CanonicalDuplicateGroupResolution | None:
+    row = connection.execute(
+        GET_JOB_CANONICAL_APPLY_URL_SQL,
+        (job_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    canonical_apply_url = _nullable_text(row["canonical_apply_url"])
+    if canonical_apply_url is None:
+        return None
+    return resolve_canonical_duplicate_group(
+        connection,
+        canonical_apply_url=canonical_apply_url,
+        dry_run=dry_run,
+    )
+
+
+def list_canonical_duplicate_apply_urls(connection) -> tuple[str, ...]:
+    rows = connection.execute(LIST_CANONICAL_DUPLICATE_GROUPS_SQL).fetchall()
+    return tuple(str(row["canonical_apply_url"]) for row in rows)
+
+
+def resolve_canonical_duplicate_group(
+    connection,
+    *,
+    canonical_apply_url: str,
+    dry_run: bool = False,
+) -> CanonicalDuplicateGroupResolution | None:
+    normalized_canonical_apply_url = _nullable_text(canonical_apply_url)
+    if normalized_canonical_apply_url is None:
+        raise ValueError("canonical_apply_url must not be blank")
+
+    rows = connection.execute(
+        SELECT_CANONICAL_DUPLICATE_GROUP_SQL,
+        (normalized_canonical_apply_url,),
+    ).fetchall()
+    if len(rows) < 2:
+        return None
+
+    winner_row = _select_canonical_duplicate_winner(rows)
+    winner_job_id = int(winner_row["id"])
+    winner_status = _resolved_duplicate_group_status(winner_row)
+    superseded_job_ids: list[int] = []
+    reactivated_job_ids: list[int] = []
+    changed_job_ids: list[int] = []
+
+    for row in rows:
+        job_id = int(row["id"])
+        current_status = _normalized_duplicate_group_status(row["status"])
+        desired_status = winner_status if job_id == winner_job_id else "superseded"
+
+        if job_id != winner_job_id:
+            superseded_job_ids.append(job_id)
+        elif current_status != desired_status and desired_status != "superseded":
+            reactivated_job_ids.append(job_id)
+
+        if current_status == desired_status:
+            continue
+
+        changed_job_ids.append(job_id)
+        if not dry_run:
+            _write_job_status_update(
+                connection,
+                job_id=job_id,
+                status=desired_status,
+            )
+
+    return CanonicalDuplicateGroupResolution(
+        canonical_apply_url=normalized_canonical_apply_url,
+        group_size=len(rows),
+        winner_job_id=winner_job_id,
+        winner_status=winner_status,
+        superseded_job_ids=tuple(superseded_job_ids),
+        reactivated_job_ids=tuple(reactivated_job_ids),
+        changed_job_ids=tuple(changed_job_ids),
+    )
 
 
 def get_ingest_batch_summary(
@@ -573,6 +837,123 @@ def get_session_history_entry(
     return _session_history_entry_from_row(row)
 
 
+def find_jobs_by_apply_url(
+    database_path: Path,
+    apply_url: str,
+) -> ApplyUrlLookupResult:
+    normalized_apply_url = _nullable_text(apply_url)
+    if normalized_apply_url is None:
+        raise ValueError("apply_url must not be blank")
+
+    runtime = resolve_database_runtime(database_path)
+    if runtime.backend == "sqlite" and not runtime.sqlite_path.exists():
+        raise ValueError(f"active sqlite database is missing: {runtime.sqlite_path}")
+
+    with closing(connect_database(database_path)) as connection:
+        if "jobs" not in table_names_from_connection(connection):
+            raise ValueError("jobs table is not available in the active database backend")
+        rows = connection.execute(
+            FIND_JOBS_BY_APPLY_URL_SQL,
+            (normalized_apply_url,),
+        ).fetchall()
+        return ApplyUrlLookupResult(
+            apply_url=normalized_apply_url,
+            backend=backend_name_for_connection(connection),
+            target_label=target_label_for_connection(connection, runtime=runtime),
+            fallback_triggered=fallback_triggered_for_connection(connection),
+            fallback_reason=fallback_reason_for_connection(connection),
+            matches=tuple(
+                ApplyUrlJobMatch(
+                    job_id=int(row["id"]),
+                    company=str(row["company"]),
+                    title=str(row["title"]),
+                    apply_url=str(row["apply_url"]),
+                    status=str(row["status"]),
+                    portal_type=_nullable_text(row["portal_type"]),
+                )
+                for row in rows
+            ),
+        )
+
+
+def find_jobs_by_apply_url_inspect(
+    database_path: Path,
+    apply_url: str,
+) -> ApplyUrlInspectResult:
+    normalized_apply_url = _nullable_text(apply_url)
+    if normalized_apply_url is None:
+        raise ValueError("apply_url must not be blank")
+    canonical_apply_url = canonicalize_apply_url(normalized_apply_url)
+
+    runtime = resolve_database_runtime(database_path)
+    if runtime.backend == "sqlite" and not runtime.sqlite_path.exists():
+        raise ValueError(f"active sqlite database is missing: {runtime.sqlite_path}")
+
+    with closing(connect_database(database_path)) as connection:
+        if "jobs" not in table_names_from_connection(connection):
+            raise ValueError("jobs table is not available in the active database backend")
+        exact_rows = connection.execute(
+            FIND_JOBS_BY_APPLY_URL_INSPECT_SQL,
+            (normalized_apply_url,),
+        ).fetchall()
+        canonical_rows = (
+            connection.execute(
+                SELECT_CANONICAL_DUPLICATE_GROUP_SQL,
+                (canonical_apply_url,),
+            ).fetchall()
+            if canonical_apply_url is not None
+            else ()
+        )
+        rows_by_id = {
+            int(row["id"]): row
+            for row in exact_rows
+        }
+        for row in canonical_rows:
+            rows_by_id.setdefault(int(row["id"]), row)
+        rows = tuple(rows_by_id[job_id] for job_id in sorted(rows_by_id))
+        winner_row = _select_canonical_duplicate_winner(rows) if rows else None
+        preferred_job_id = int(winner_row["id"]) if winner_row is not None else None
+        effective_state = (
+            _resolved_duplicate_group_status(winner_row)
+            if winner_row is not None
+            else None
+        )
+        return ApplyUrlInspectResult(
+            apply_url=normalized_apply_url,
+            backend=backend_name_for_connection(connection),
+            target_label=target_label_for_connection(connection, runtime=runtime),
+            fallback_triggered=fallback_triggered_for_connection(connection),
+            fallback_reason=fallback_reason_for_connection(connection),
+            matches=tuple(
+                _apply_url_inspect_match_from_row(row, rank=index)
+                for index, row in enumerate(rows, start=1)
+            ),
+            preferred_job_id=preferred_job_id,
+            sibling_job_ids=tuple(
+                int(row["id"])
+                for row in rows
+                if preferred_job_id is not None and int(row["id"]) != preferred_job_id
+            ),
+            effective_state=effective_state,
+            url_already_handled=effective_state not in {None, "new"},
+            opened_job_ids=tuple(
+                int(row["id"])
+                for row in rows
+                if _resolved_duplicate_group_status(row) == "opened"
+            ),
+            applied_job_ids=tuple(
+                int(row["id"])
+                for row in rows
+                if _resolved_duplicate_group_status(row) == "applied"
+            ),
+            rejected_job_ids=tuple(
+                int(row["id"])
+                for row in rows
+                if _resolved_duplicate_group_status(row) == "rejected"
+            ),
+        )
+
+
 def jobs_table_columns(connection) -> tuple[str, ...]:
     return _table_columns(connection, "jobs")
 
@@ -602,6 +983,7 @@ def _initialize_schema_connection(
     else:
         connection.executescript(SCHEMA_SQL)
     _ensure_jobs_columns(connection)
+    _backfill_jobs_applied_at(connection)
     if backend_name_for_connection(connection) == "sqlite":
         connection.executescript(POST_SCHEMA_SQL)
     elif include_secondary_indexes:
@@ -620,11 +1002,47 @@ def _ensure_jobs_columns(connection) -> None:
         "source_registry_id": "BIGINT" if backend_name_for_connection(connection) == "postgres" else "INTEGER",
         "canonical_apply_url": "TEXT",
         "identity_key": "TEXT",
+        "applied_at": "TEXT",
     }
     for column_name, column_type in required_columns.items():
         if column_name in existing_columns:
             continue
         connection.execute(f"ALTER TABLE jobs ADD COLUMN {column_name} {column_type}")
+
+
+def _backfill_jobs_applied_at(connection) -> None:
+    rows = connection.execute(
+        """
+        SELECT
+            jobs.id,
+            (
+                SELECT application_tracking.created_at
+                FROM application_tracking
+                WHERE application_tracking.job_id = jobs.id
+                  AND application_tracking.status = 'applied'
+                ORDER BY application_tracking.created_at DESC, application_tracking.id DESC
+                LIMIT 1
+            ) AS applied_at
+        FROM jobs
+        WHERE jobs.status = 'applied'
+          AND jobs.applied_at IS NULL
+        """
+    ).fetchall()
+    for row in rows:
+        applied_at = _nullable_text(row["applied_at"])
+        if applied_at is None:
+            continue
+        connection.execute(
+            """
+            UPDATE jobs
+            SET applied_at = ?
+            WHERE id = ?
+            """,
+            (
+                applied_at,
+                int(row["id"]),
+            ),
+        )
 
 
 def _backfill_job_identity_columns(connection) -> None:
@@ -677,6 +1095,13 @@ def _table_columns(connection, table_name: str) -> tuple[str, ...]:
     return table_columns_from_connection(connection, table_name)
 
 
+def _normalize_job_status(value: object) -> str:
+    if not isinstance(value, str):
+        return "new"
+    normalized_value = value.strip().lower()
+    return normalized_value or "new"
+
+
 def _should_use_identity_key_match(job_record: Mapping[str, str | None]) -> bool:
     return job_record.get("apply_url") is None or job_record.get("source_job_id") is not None
 
@@ -698,6 +1123,208 @@ def _describe_identity_match(job_record: Mapping[str, str | None]) -> str:
             _nullable_text(job_record.get("title")) or "title missing",
             _nullable_text(job_record.get("location")) or "location missing",
         )
+    )
+
+
+def _apply_url_inspect_match_from_row(row, *, rank: int) -> ApplyUrlInspectMatch:
+    from .jobs.queue import summarize_queue_reason
+    from .jobs.scoring import score_job
+    from .resume.recommendations import recommend_scored_job
+
+    source_job_id = (
+        _nullable_text(row["source_job_id"])
+        if "source_job_id" in row.keys()
+        else None
+    )
+    identity = build_job_identity(
+        {
+            "source": row["source"],
+            "source_job_id": source_job_id,
+            "company": row["company"],
+            "title": row["title"],
+            "location": row["location"],
+            "apply_url": row["apply_url"],
+            "portal_type": row["portal_type"],
+        }
+    )
+    canonical_apply_url = (
+        _nullable_text(row["canonical_apply_url"])
+        if "canonical_apply_url" in row.keys()
+        else None
+    ) or identity.canonical_apply_url
+    identity_key = (
+        _nullable_text(row["identity_key"])
+        if "identity_key" in row.keys()
+        else None
+    ) or identity.identity_key
+    status = _normalized_duplicate_group_status(row["status"])
+    resolved_status = _resolved_duplicate_group_status(row)
+    actionable = status == "new"
+
+    scored_job = score_job(row)
+    recommendation = None
+    try:
+        recommendation = recommend_scored_job(
+            scored_job,
+            rank=rank,
+            reason_summary=summarize_queue_reason(scored_job),
+        )
+    except Exception:
+        recommendation = None
+
+    warning_reasons = _apply_url_inspect_warning_reasons(
+        status=status,
+        actionable=actionable,
+        has_apply_url=scored_job.apply_url is not None,
+        recommendation_available=recommendation is not None,
+    )
+
+    return ApplyUrlInspectMatch(
+        job_id=int(row["id"]),
+        company=str(row["company"]),
+        title=str(row["title"]),
+        location=_nullable_text(row["location"]),
+        status=status,
+        resolved_status=resolved_status,
+        portal_type=_nullable_text(row["portal_type"]),
+        source=str(row["source"]),
+        apply_url=str(row["apply_url"]),
+        canonical_apply_url=canonical_apply_url,
+        identity_key=identity_key,
+        actionable=actionable,
+        launchable=scored_job.apply_url is not None and recommendation is not None,
+        warnings=warning_reasons,
+        recommended_resume_variant_key=(
+            recommendation.resume_variant_key if recommendation is not None else None
+        ),
+        recommended_resume_variant_label=(
+            recommendation.resume_variant_label if recommendation is not None else None
+        ),
+        recommended_profile_snippet_key=(
+            recommendation.snippet_key if recommendation is not None else None
+        ),
+        recommended_profile_snippet_label=(
+            recommendation.snippet_label if recommendation is not None else None
+        ),
+        recommended_profile_snippet_text=(
+            recommendation.snippet_text if recommendation is not None else None
+        ),
+    )
+
+
+def _apply_url_inspect_warning_reasons(
+    *,
+    status: str,
+    actionable: bool,
+    has_apply_url: bool,
+    recommendation_available: bool,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if not actionable:
+        reasons.append(
+            f"not actionable in normal queue/session flow because status = {status}"
+        )
+    if not has_apply_url:
+        reasons.append("launch would be skipped because apply_url is missing")
+    if not recommendation_available:
+        reasons.append("launch would be skipped because recommendation data is unavailable")
+    return tuple(reasons)
+
+
+_DUPLICATE_TITLE_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+_CANONICAL_DUPLICATE_STATUS_PRIORITY = {
+    "offer": 8,
+    "rejected": 7,
+    "interview": 6,
+    "assessment": 5,
+    "recruiter_screen": 4,
+    "applied": 3,
+    "skipped": 2,
+    "opened": 1,
+    "new": 0,
+    "invalid_location": -1,
+    "superseded": -2,
+}
+
+
+def _select_canonical_duplicate_winner(rows) -> object:
+    applied_rows = tuple(
+        row for row in rows if _resolved_duplicate_group_status(row) == "applied"
+    )
+    candidate_rows = applied_rows if applied_rows else rows
+    return min(
+        candidate_rows,
+        key=lambda row: (
+            -_CANONICAL_DUPLICATE_STATUS_PRIORITY[_resolved_duplicate_group_status(row)],
+            -_title_quality_sort_key(row["title"])[0],
+            -_title_quality_sort_key(row["title"])[1],
+            -_duplicate_group_score(row),
+            int(row["id"]),
+        ),
+    )
+
+
+def _title_quality_sort_key(value: object) -> tuple[int, int]:
+    normalized_title = _nullable_text(value) or ""
+    tokens = _DUPLICATE_TITLE_TOKEN_RE.findall(normalized_title)
+    return len(tokens), len(normalized_title)
+
+
+def _duplicate_group_score(row) -> int:
+    from .jobs.scoring import score_job
+
+    return score_job(row).total_score
+
+
+def _resolved_duplicate_group_status(row) -> str:
+    current_status = _normalized_duplicate_group_status(row["status"])
+    if current_status == "superseded":
+        base_status = _normalized_duplicate_group_status(
+            row["latest_non_superseded_tracking_status"]
+        )
+    else:
+        base_status = current_status
+
+    if bool(row["has_applied_application"]) and base_status in {"new", "opened"}:
+        return "applied"
+    return base_status
+
+
+def _normalized_duplicate_group_status(value: object) -> str:
+    normalized_value = normalize_optional_metadata(value)
+    if normalized_value is None:
+        return "new"
+    lowered_value = normalized_value.lower()
+    if lowered_value not in _CANONICAL_DUPLICATE_STATUS_PRIORITY:
+        return "new"
+    return lowered_value
+
+
+def _write_job_status_update(
+    connection,
+    *,
+    job_id: int,
+    status: str,
+) -> None:
+    cursor = connection.execute(
+        "INSERT INTO application_tracking (job_id, status) VALUES (?, ?)",
+        (job_id, status),
+    )
+    tracking_row = connection.execute(
+        "SELECT created_at FROM application_tracking WHERE id = ?",
+        (cursor.lastrowid,),
+    ).fetchone()
+    assert tracking_row is not None
+    tracking_timestamp = str(tracking_row["created_at"])
+    if status == "applied":
+        connection.execute(
+            "UPDATE jobs SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
+            (status, tracking_timestamp, tracking_timestamp, job_id),
+        )
+        return
+    connection.execute(
+        "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
+        (status, tracking_timestamp, job_id),
     )
 
 
