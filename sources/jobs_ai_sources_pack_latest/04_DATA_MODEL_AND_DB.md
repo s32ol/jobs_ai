@@ -1,6 +1,6 @@
 # Data Model and DB
 
-The current backend story is defined by `src/jobs_ai/config.py`, `src/jobs_ai/db_runtime.py`, `src/jobs_ai/db.py`, and `src/jobs_ai/db_postgres.py`.
+The current backend story is defined by `src/jobs_ai/config.py`, `src/jobs_ai/db_runtime.py`, `src/jobs_ai/db.py`, `src/jobs_ai/db_postgres.py`, and `src/jobs_ai/maintenance.py`.
 
 ## Backend selection
 - `load_settings()` merges the repo `.env` file and process environment.
@@ -23,17 +23,19 @@ The current backend story is defined by `src/jobs_ai/config.py`, `src/jobs_ai/db
 - `jobs`
   - core backlog table
   - stores `source`, `source_job_id`, `company`, `title`, `location`, `apply_url`, `portal_type`, `status`, `raw_json`
-  - also stores ingest and dedupe metadata: `ingest_batch_id`, `source_query`, `import_source`, `source_registry_id`, `canonical_apply_url`, `identity_key`
+  - also stores ingest and dedupe metadata: `ingest_batch_id`, `source_query`, `import_source`, `source_registry_id`, `canonical_apply_url`, `identity_key`, `applied_at`
+  - current tracked statuses in practice include `new`, `opened`, `applied`, `recruiter_screen`, `assessment`, `interview`, `offer`, `rejected`, `skipped`, `invalid_location`, and `superseded`
 - `applications`
   - per-job application state, notes, resume variant, and timestamps
+  - still contributes applied evidence when canonical duplicate groups are resolved
 - `application_tracking`
-  - append-only status history such as `opened`, `applied`, `interview`, `offer`, `rejected`
+  - append-only status history such as `opened`, `applied`, `interview`, `offer`, `rejected`, `invalid_location`, and `superseded`
 - `session_history`
   - records exported manifest path, item counts, launchable counts, batch id, and source query
 - `source_registry`
   - durable ATS source registry keyed by `normalized_url`
 
-## Dedupe rules
+## Duplicate and canonical URL behavior
 Duplicate matching is centralized in `src/jobs_ai/db.py` and `src/jobs_ai/jobs/identity.py`.
 
 Match order:
@@ -46,9 +48,23 @@ Identity behavior:
 - otherwise use `portal-or-host-or-source | company | title | location`
 - canonical apply URLs use `src/jobs_ai/portal_support.py` to strip tracking params and promote company-scoped Greenhouse/Ashby job URLs when possible
 
+Import-time nuance:
+- exact or identity duplicates can still be skipped before insert
+- canonical URL siblings can still be inserted, then resolved into one preferred row with sibling rows marked `superseded`
+- queue selection and session exports operate on the surviving actionable rows, not the superseded siblings
+
+## Canonical duplicate repair behavior
+- `resolve_canonical_duplicate_group()` chooses one winner per `canonical_apply_url` group
+- winner selection prefers stronger downstream evidence such as applied state, then uses title quality, score, and stable id tie-breakers
+- sibling rows are marked `superseded`
+- if a duplicate group already has applied evidence, one preferred row can be reactivated or preserved as `applied` while siblings stay `superseded`
+- `jobs-ai maintenance supersede-duplicates` reruns this logic across existing duplicate groups without requiring reimport
+
 ## Schema and backfill behavior
 - `initialize_schema()` creates missing tables and indexes
-- it also backfills newer `jobs` columns such as `canonical_apply_url` and `identity_key` for older DBs
+- it also ensures newer `jobs` columns such as `canonical_apply_url`, `identity_key`, and `applied_at`
+- it backfills `jobs.applied_at` from the newest `application_tracking` row whose status is `applied` when older DBs are missing that column
+- it backfills `canonical_apply_url` and `identity_key` for older job rows
 - SQLite uses `sqlite3` with foreign keys enabled
 - Postgres uses `psycopg` with a thin adapter so the rest of the code can keep using DB-agnostic calls
 
@@ -57,9 +73,11 @@ Identity behavior:
   - `build_backend_status()`
   - `ping_database_target()`
   - `migrate_sqlite_to_postgres()`
+  - migration carries `canonical_apply_url`, `identity_key`, and `applied_at`, and remaps duplicate-linked child rows safely
 - `src/jobs_ai/db_merge.py`
   - merges a second SQLite DB into the target SQLite DB
   - reuses the same duplicate matcher used by import
+  - preserves duplicate-aware identity fields and `applied_at` when present
   - remaps related application/session rows safely
 
 ## Current doc drift to keep in mind

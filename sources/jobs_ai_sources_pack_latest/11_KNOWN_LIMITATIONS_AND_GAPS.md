@@ -3,6 +3,7 @@
 ## Doc drift
 - `docs/architecture.md` still opens with “SQLite-backed”
 - current code supports Postgres or SQLite, with fallback behavior
+- the older source-pack summaries under-described direct URL flows, canonical duplicate repair, and `applied_at`
 
 ## Old bundle drift
 - `chatgpt_sources_core_v2/` is not current architecture
@@ -20,7 +21,14 @@
 
 ## Launch/open edge cases
 - `open` can open a manifest item with an `apply_url` even if that item would not be launchable in the stricter launch plan
+- direct `open <job_id|apply_url>` leaves application status unchanged
 - `session start --open` and `session reopen` execute immediately and do not share the confirmation layer used by `launch-dry-run`
+
+## URL command semantics
+- `check-url` without `--inspect` is exact-match only; a canonical-equivalent tracking URL may still report no match
+- `apply-url` and `applied <apply_url>` are intentionally different:
+  - `apply-url` marks one selected row as applied and may supersede siblings
+  - `applied <apply_url>` marks every matched row in the canonical URL group
 
 ## Backend-selection nuance
 - runtime/backend selection follows env/config first

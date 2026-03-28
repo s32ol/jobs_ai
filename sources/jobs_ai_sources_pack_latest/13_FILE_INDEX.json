@@ -1,9 +1,10 @@
 {
   "pack_folder": "sources/jobs_ai_sources_pack_latest",
-  "file_count": 21,
+  "file_count": 22,
   "priority_order": [
     "00_README_START_HERE.md",
     "02_CLI_COMMANDS_AND_FLOW.md",
+    "20_RECENT_UPDATES.md",
     "03_ARCHITECTURE_OVERVIEW.md",
     "04_DATA_MODEL_AND_DB.md",
     "05_JOB_PIPELINE.md",
@@ -27,12 +28,13 @@
   "files": [
     {
       "file_name": "00_README_START_HERE.md",
-      "purpose": "Start here. Explains what this pack is, the current happy path, and the most important correction about current Postgres-or-SQLite backend support.",
+      "purpose": "Start here. Explains what this pack is, the current happy path, and the most important repo-state notes about current backend support, canonical duplicate handling, and one-job operator flow.",
       "source_paths": [
         "README.md",
         "docs/architecture.md",
-        "scripts/README.md",
         "src/jobs_ai/cli.py",
+        "src/jobs_ai/job_reference.py",
+        "src/jobs_ai/application_tracking.py",
         "src/jobs_ai/config.py",
         "src/jobs_ai/db_runtime.py"
       ],
@@ -41,27 +43,32 @@
     },
     {
       "file_name": "01_REPO_MAP.md",
-      "purpose": "Compact map of the current repo layout and which modules matter most for operator workflow, discovery, DB/runtime, launch/session, and application assist.",
+      "purpose": "Compact map of the current repo layout and which modules matter most for operator workflow, discovery, DB/runtime, direct references, maintenance, launch/session, and application assist.",
       "source_paths": [
         "README.md",
         "docs/architecture.md",
         "src/jobs_ai/cli.py",
         "src/jobs_ai/run_workflow.py",
-        "src/jobs_ai/session_start.py"
+        "src/jobs_ai/session_start.py",
+        "src/jobs_ai/job_reference.py",
+        "src/jobs_ai/maintenance.py"
       ],
       "kind": "summary",
-      "priority_rank": 12
+      "priority_rank": 13
     },
     {
       "file_name": "02_CLI_COMMANDS_AND_FLOW.md",
-      "purpose": "Explains canonical commands, command groups, and how the CLI delegates into workflow, session, DB, and application-assist modules.",
+      "purpose": "Explains canonical commands, command groups, direct-reference helpers, maintenance commands, and how the CLI delegates into workflow, session, tracking, and application-assist modules.",
       "source_paths": [
         "README.md",
-        "scripts/README.md",
         "src/jobs_ai/cli.py",
         "src/jobs_ai/run_workflow.py",
         "src/jobs_ai/session_start.py",
-        "src/jobs_ai/application_prefill.py"
+        "src/jobs_ai/job_reference.py",
+        "src/jobs_ai/application_tracking.py",
+        "src/jobs_ai/application_prefill.py",
+        "src/jobs_ai/application_log.py",
+        "src/jobs_ai/maintenance.py"
       ],
       "kind": "summary",
       "priority_rank": 2
@@ -77,11 +84,11 @@
         "src/jobs_ai/launch_executor.py"
       ],
       "kind": "summary",
-      "priority_rank": 3
+      "priority_rank": 4
     },
     {
       "file_name": "04_DATA_MODEL_AND_DB.md",
-      "purpose": "Backend selection, runtime fallback behavior, core schema, dedupe rules, and the current migration/merge model.",
+      "purpose": "Backend selection, runtime fallback behavior, core schema, canonical duplicate handling, applied timestamps, and the current migration/merge model.",
       "source_paths": [
         "README.md",
         ".env.example",
@@ -92,28 +99,30 @@
         "src/jobs_ai/db_postgres.py",
         "src/jobs_ai/db_merge.py",
         "src/jobs_ai/jobs/identity.py",
-        "src/jobs_ai/jobs/normalization.py"
+        "src/jobs_ai/maintenance.py"
       ],
       "kind": "summary",
-      "priority_rank": 4
+      "priority_rank": 5
     },
     {
       "file_name": "05_JOB_PIPELINE.md",
-      "purpose": "Stage-by-stage view of the daily operator pipeline, with the main inputs, outputs, and side effects.",
+      "purpose": "Stage-by-stage view of the daily operator pipeline, including optional invalid-location guarding, canonical duplicate collapse, and one-job review/tracking flow.",
       "source_paths": [
         "README.md",
         "src/jobs_ai/run_workflow.py",
         "src/jobs_ai/discover/cli.py",
         "src/jobs_ai/collect/harness.py",
         "src/jobs_ai/jobs/importer.py",
-        "src/jobs_ai/session_start.py"
+        "src/jobs_ai/session_start.py",
+        "src/jobs_ai/maintenance.py",
+        "src/jobs_ai/application_tracking.py"
       ],
       "kind": "summary",
-      "priority_rank": 5
+      "priority_rank": 6
     },
     {
       "file_name": "06_DISCOVERY_AND_IMPORT.md",
-      "purpose": "Detailed map of ATS discovery, collection, import normalization, dedupe, and registry-first collection.",
+      "purpose": "Detailed map of ATS discovery, collection, import normalization, import-side auto-skip behavior, canonical duplicate resolution, and registry-first collection.",
       "source_paths": [
         "README.md",
         "docs/architecture.md",
@@ -127,7 +136,7 @@
         "src/jobs_ai/portal_support.py"
       ],
       "kind": "summary",
-      "priority_rank": 6
+      "priority_rank": 7
     },
     {
       "file_name": "07_SCORING_QUEUE_AND_SESSION_FLOW.md",
@@ -144,11 +153,11 @@
         "src/jobs_ai/db.py"
       ],
       "kind": "summary",
-      "priority_rank": 7
+      "priority_rank": 8
     },
     {
       "file_name": "08_LAUNCH_EXECUTION_AND_SAFETY.md",
-      "purpose": "Clarifies launch-preview vs launch-plan vs dry-run vs open/reopen and documents what is read-only versus side-effectful.",
+      "purpose": "Clarifies launch-preview vs launch-plan vs dry-run vs direct open/reopen and documents what is read-only versus side-effectful, including URL-based status flows.",
       "source_paths": [
         "README.md",
         "src/jobs_ai/launch_preview.py",
@@ -159,15 +168,16 @@
         "src/jobs_ai/session_history.py",
         "src/jobs_ai/session_open.py",
         "src/jobs_ai/session_mark.py",
+        "src/jobs_ai/job_reference.py",
         "src/jobs_ai/application_tracking.py",
         "src/jobs_ai/application_prefill.py"
       ],
       "kind": "summary",
-      "priority_rank": 8
+      "priority_rank": 9
     },
     {
       "file_name": "09_RESUME_AND_APPLICATION_ASSIST.md",
-      "purpose": "Explains resume resolution, applicant profiles, application-assist, browser prefill, safe fields, and application logging.",
+      "purpose": "Explains resume resolution, applicant profiles, launch-order-based application assist, browser prefill, safe fields, and application logging.",
       "source_paths": [
         "README.md",
         "docs/applicant_profile.example.json",
@@ -179,10 +189,11 @@
         "src/jobs_ai/prefill_portals.py",
         "src/jobs_ai/prefill_browser.py",
         "src/jobs_ai/autofill/profile_config.py",
-        "src/jobs_ai/application_log.py"
+        "src/jobs_ai/application_log.py",
+        "src/jobs_ai/application_tracking.py"
       ],
       "kind": "summary",
-      "priority_rank": 9
+      "priority_rank": 10
     },
     {
       "file_name": "10_CONFIG_ENV_AND_PATHS.md",
@@ -197,7 +208,7 @@
         "src/jobs_ai/autofill/profile_config.py"
       ],
       "kind": "summary",
-      "priority_rank": 10
+      "priority_rank": 11
     },
     {
       "file_name": "11_KNOWN_LIMITATIONS_AND_GAPS.md",
@@ -214,20 +225,21 @@
         "src/jobs_ai/prefill_portals.py"
       ],
       "kind": "summary",
-      "priority_rank": 13
+      "priority_rank": 14
     },
     {
       "file_name": "12_OPERATOR_QUICKSTART.md",
-      "purpose": "Exact command recipes for installation, daily workflows, session review, application assist, tracking, and stats.",
+      "purpose": "Exact command recipes for installation, daily workflows, one-job review, launch-order-based assist, direct URL status updates, maintenance, and stats.",
       "source_paths": [
         "README.md",
-        "scripts/README.md",
         "pyproject.toml",
         "src/jobs_ai/cli.py",
+        "src/jobs_ai/job_reference.py",
+        "src/jobs_ai/application_log.py",
         "src/jobs_ai/config.py"
       ],
       "kind": "summary",
-      "priority_rank": 11
+      "priority_rank": 12
     },
     {
       "file_name": "13_FILE_INDEX.json",
@@ -236,7 +248,7 @@
         "scripts/build_sources_pack.py"
       ],
       "kind": "summary",
-      "priority_rank": 20
+      "priority_rank": 21
     },
     {
       "file_name": "14_CODE_EXCERPT_CLI_ENTRYPOINTS.md",
@@ -246,7 +258,7 @@
         "src/jobs_ai/__main__.py"
       ],
       "kind": "excerpt",
-      "priority_rank": 14
+      "priority_rank": 15
     },
     {
       "file_name": "15_CODE_EXCERPT_DB_RUNTIME_AND_SCHEMA.md",
@@ -259,7 +271,7 @@
         "src/jobs_ai/db_postgres.py"
       ],
       "kind": "excerpt",
-      "priority_rank": 15
+      "priority_rank": 16
     },
     {
       "file_name": "16_CODE_EXCERPT_DISCOVERY_COLLECTION_IMPORT.md",
@@ -273,7 +285,7 @@
         "src/jobs_ai/jobs/normalization.py"
       ],
       "kind": "excerpt",
-      "priority_rank": 16
+      "priority_rank": 17
     },
     {
       "file_name": "17_CODE_EXCERPT_SESSION_MANIFEST_AND_HISTORY.md",
@@ -286,7 +298,7 @@
         "src/jobs_ai/session_mark.py"
       ],
       "kind": "excerpt",
-      "priority_rank": 17
+      "priority_rank": 18
     },
     {
       "file_name": "18_CODE_EXCERPT_LAUNCH_AND_EXECUTOR.md",
@@ -298,7 +310,7 @@
         "src/jobs_ai/launch_executor.py"
       ],
       "kind": "excerpt",
-      "priority_rank": 18
+      "priority_rank": 19
     },
     {
       "file_name": "19_CODE_EXCERPT_RESUME_AND_APPLICATION_ASSIST.md",
@@ -314,11 +326,29 @@
         "src/jobs_ai/application_log.py"
       ],
       "kind": "excerpt",
-      "priority_rank": 19
+      "priority_rank": 20
+    },
+    {
+      "file_name": "20_RECENT_UPDATES.md",
+      "purpose": "Change summary for the latest stabilized behavior, covering new CLI surfaces, URL-based mark flows, canonical duplicate handling, applied timestamps, one-job operator flow, and safety caveats.",
+      "source_paths": [
+        "README.md",
+        "src/jobs_ai/cli.py",
+        "src/jobs_ai/job_reference.py",
+        "src/jobs_ai/application_tracking.py",
+        "src/jobs_ai/db.py",
+        "src/jobs_ai/run_workflow.py",
+        "src/jobs_ai/application_assist.py",
+        "src/jobs_ai/application_prefill.py",
+        "src/jobs_ai/application_log.py",
+        "src/jobs_ai/maintenance.py"
+      ],
+      "kind": "summary",
+      "priority_rank": 3
     },
     {
       "file_name": "99_UPLOAD_RECOMMENDATION.md",
-      "purpose": "Recommended upload order for 5, 10, or all files, plus which files are optional after the core summaries.",
+      "purpose": "Recommended upload order for 5, 10, or all files, including the recent-updates summary and which files are optional after the core summaries.",
       "source_paths": [
         "README.md",
         "docs/architecture.md",
@@ -328,7 +358,7 @@
         "scripts/build_sources_pack.py"
       ],
       "kind": "summary",
-      "priority_rank": 21
+      "priority_rank": 22
     }
   ]
 }

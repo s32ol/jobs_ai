@@ -31,6 +31,11 @@ Resume selection and application assist sit on top of the ranked queue and sessi
   - canned answers
   - optional resume path overrides
 
+## Operator coordinate systems
+- `open --manifest --index` and `session mark --manifest --indexes` use manifest index
+- `application-assist --prefill --launch-order` and `application-log --manifest --launch-order` use launch order among launchable items only
+- Prefill auto-selects only when exactly one launchable item exists; otherwise it requires `--launch-order`
+
 ## `application-assist` without `--prefill`
 - Code: `src/jobs_ai/application_assist.py`
 - Read-only
@@ -44,13 +49,13 @@ Resume selection and application assist sit on top of the ranked queue and sessi
   2. build launch plan
   3. choose one launchable entry
   4. load applicant profile
-  5. normalize portal URL
+  5. normalize or company-scope the portal URL when appropriate
   6. resolve actual resume file path
   7. open the page in the browser backend
   8. fill supported safe fields
   9. upload resume when possible
   10. optionally use the recommended snippet as short text
-  11. report unresolved required fields
+  11. report unresolved required fields and detected submit controls
   12. stop before submit
 
 ## Portal prefill support
@@ -59,13 +64,14 @@ Resume selection and application assist sit on top of the ranked queue and sessi
   - Greenhouse
   - Lever
   - Ashby
-- Limited manual support:
+- Manual handoff only:
   - Workday
 
 ## Browser backend behavior
 - Code: `src/jobs_ai/prefill_browser.py`, `src/jobs_ai/autofill/profile_config.py`
 - Current backend: Playwright
 - On local macOS runs, the default behavior is a dedicated local Chrome profile flow
+- Those local Chrome-profile defaults apply only to `application-assist --prefill`, not to remote-safe workflows such as `remote_print`
 - Important browser env vars:
   - `JOBS_AI_BROWSER_CHANNEL`
   - `JOBS_AI_BROWSER_USER_DATA_DIR`
@@ -75,6 +81,10 @@ Resume selection and application assist sit on top of the ranked queue and sessi
 - JSON log writer:
   - `src/jobs_ai/application_log.py`
   - writes one JSON file per handled application under `data/applications/`
+- `application-assist --prefill` can hand off directly into logging:
+  - `--log-outcome` prompts after the browser closes
+  - `--log-status` and `--log-notes` write the log non-interactively after the browser closes
+- `application-log --manifest --launch-order` follows launch order among launchable items, not raw manifest position
 - DB status tracking:
   - `src/jobs_ai/application_tracking.py`
   - separate from the JSON application log
@@ -82,4 +92,5 @@ Resume selection and application assist sit on top of the ranked queue and sessi
 ## Important current behavior
 - Prefill may open a normalized or company-scoped portal URL
 - Application logging still records the original manifest `apply_url`
+- Logging failures are reported after prefilling, but they do not undo a successful prefill run
 - If an applicant-profile resume override points to a missing file, prefill records that as a skipped resume field instead of silently falling back

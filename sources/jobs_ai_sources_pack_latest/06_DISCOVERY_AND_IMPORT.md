@@ -53,6 +53,7 @@ Discovery/import is split across `discover`, `collect`, `sources`, and `jobs`.
   - `salary_text`
   - `posted_at`
   - `found_at`
+- Some filtered titles can be auto-marked `skipped` at import time instead of entering the normal `new` queue
 
 ## Normalization and dedupe
 - `src/jobs_ai/jobs/normalization.py`
@@ -62,8 +63,11 @@ Discovery/import is split across `discover`, `collect`, `sources`, and `jobs`.
 - `src/jobs_ai/jobs/identity.py`
   - derives `canonical_apply_url`
   - derives `identity_key`
-- `src/jobs_ai/db.py`
-  - checks duplicate rules before insert
+- `src/jobs_ai/db.py` and `src/jobs_ai/jobs/importer.py`
+  - still support exact URL, canonical URL, and identity-key duplicate matching
+  - can skip outright duplicates before insert
+  - can also insert canonical URL siblings, then resolve the whole canonical group into one preferred row with sibling rows marked `superseded`
+  - report `duplicate_count`, `canonical_duplicate_groups_resolved`, and `superseded_count` in the import result
 
 ## What gets written where
 - Collect artifacts:
